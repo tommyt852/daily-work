@@ -10,8 +10,9 @@
   const TZ = "Asia/Hong_Kong";
   const STORAGE_KEY = "daily-workbench:v1";
   const TAB_KEY = "daily-workbench:active-tab";
-  const EXPORT_VERSION = 3;
-  const DATA_VERSION = 3;
+  const THEME_KEY = "daily-workbench:theme";
+  const EXPORT_VERSION = 4;
+  const DATA_VERSION = 4;
   const DOW_ZH = ["日", "一", "二", "三", "四", "五", "六"];
   const WATER_INTERVALS = [30, 45, 60, 90];
   const WATER_MIN_GAP_MS = 25 * 1000;
@@ -145,6 +146,133 @@
       .map((t) => t.slice(0, 16));
   }
 
+
+  const RECUR_TYPES = ["none", "daily", "weekdays", "weekly", "monthly"];
+  const RECUR_LABEL = {
+    none: "無",
+    daily: "每日",
+    weekdays: "每個工作日",
+    weekly: "每週",
+    monthly: "每月同一日",
+  };
+
+  function normalizeWeekdays(raw) {
+    if (!Array.isArray(raw)) return [];
+    const set = new Set();
+    raw.forEach((n) => {
+      const v = Number(n);
+      if (Number.isInteger(v) && v >= 0 && v <= 6) set.add(v);
+    });
+    return Array.from(set).sort((a, b) => a - b);
+  }
+
+  function normalizeRecurrence(raw) {
+    if (!raw || raw === "none" || raw === "null") {
+      return { type: "none", weekdays: [] };
+    }
+    if (typeof raw === "string") {
+      if (RECUR_TYPES.includes(raw)) {
+        return { type: raw === "weekly" ? "weekly" : raw, weekdays: raw === "weekly" ? [1] : [] };
+      }
+      return { type: "none", weekdays: [] };
+    }
+    if (typeof raw !== "object") return { type: "none", weekdays: [] };
+    let type = typeof raw.type === "string" ? raw.type : "none";
+    if (!RECUR_TYPES.includes(type)) type = "none";
+    const weekdays = type === "weekly" ? normalizeWeekdays(raw.weekdays) : [];
+    if (type === "weekly" && weekdays.length === 0) {
+      return { type: "weekly", weekdays: [1] };
+    }
+    return { type, weekdays };
+  }
+
+  function cloneRecurrence(r) {
+    const n = normalizeRecurrence(r);
+    return { type: n.type, weekdays: n.weekdays.slice() };
+  }
+
+  function isRecurring(task) {
+    return task && task.recurrence && task.recurrence.type && task.recurrence.type !== "none";
+  }
+
+  function recurrenceSummary(rec) {
+    const r = normalizeRecurrence(rec);
+    if (r.type === "none") return "";
+    if (r.type === "weekly") {
+      const days = (r.weekdays || []).map((d) => DOW_ZH[d]).join("、");
+      return days ? `每週（${days}）` : "每週";
+    }
+    return RECUR_LABEL[r.type] || "";
+  }
+
+  /** Next HK date key after baseKey for a recurrence rule. */
+  function nextOccurrenceDateKey(baseKey, recurrence) {
+    const r = normalizeRecurrence(recurrence);
+    if (r.type === "none") return null;
+    if (r.type === "daily") return addDaysToKey(baseKey, 1);
+    if (r.type === "weekdays") {
+      for (let i = 1; i <= 14; i++) {
+        const k = addDaysToKey(baseKey, i);
+        const wd = weekdayIndex(k);
+        if (wd >= 1 && wd <= 5) return k;
+      }
+      return addDaysToKey(baseKey, 1);
+    }
+    if (r.type === "weekly") {
+      const wanted = new Set(r.weekdays.length ? r.weekdays : [1]);
+      for (let i = 1; i <= 14; i++) {
+        const k = addDaysToKey(baseKey, i);
+        if (wanted.has(weekdayIndex(k))) return k;
+      }
+      return addDaysToKey(baseKey, 7);
+    }
+    if (r.type === "monthly") {
+      const [y, m, d] = baseKey.split("-").map(Number);
+      let ny = y;
+      let nm = m + 1;
+      if (nm > 12) {
+        nm = 1;
+        ny += 1;
+      }
+      // Clamp to last day of target month
+      const lastDay = new Date(Date.UTC(ny, nm, 0)).getUTCDate();
+      const day = Math.min(d, lastDay);
+      const mm = String(nm).padStart(2, "0");
+      const dd = String(day).padStart(2, "0");
+      return `${ny}-${mm}-${dd}`;
+    }
+    return null;
+  }
+
+  function readComposerRecurrence() {
+    const type = (els.taskRecurrence && els.taskRecurrence.value) || "none";
+    if (type === "weekly") {
+      const picks = els.taskWeekdayPicks
+        ? Array.from(els.taskWeekdayPicks.querySelectorAll('input[type="checkbox"]:checked')).map(
+            (el) => Number(el.value)
+          )
+        : [];
+      return normalizeRecurrence({ type: "weekly", weekdays: picks.length ? picks : [1] });
+    }
+    return normalizeRecurrence({ type });
+  }
+
+  function resetComposerRecurrence() {
+    if (els.taskRecurrence) els.taskRecurrence.value = "none";
+    if (els.taskWeekdayPicks) {
+      els.taskWeekdayPicks.hidden = true;
+      els.taskWeekdayPicks.querySelectorAll('input[type="checkbox"]').forEach((el) => {
+        el.checked = false;
+      });
+    }
+  }
+
+  function syncComposerWeekdayVisibility() {
+    if (!els.taskRecurrence || !els.taskWeekdayPicks) return;
+    const weekly = els.taskRecurrence.value === "weekly";
+    els.taskWeekdayPicks.hidden = !weekly;
+  }
+
   function normalizeStatus(s, doneFlag) {
     if (s === "todo" || s === "doing" || s === "done") return s;
     if (doneFlag) return "done";
@@ -203,6 +331,7 @@
       important: flags.important,
       urgent: flags.urgent,
       tags: parseTags(t.tags),
+      recurrence: normalizeRecurrence(t.recurrence),
       createdAt: typeof t.createdAt === "string" ? t.createdAt : new Date().toISOString(),
       completedAt,
       completedDateKey,
@@ -293,6 +422,7 @@
             createdAt: new Date().toISOString(),
             completedAt: null,
             completedDateKey: null,
+            recurrence: { type: "none", weekdays: [] },
           },
           {
             id: uid(),
@@ -305,6 +435,7 @@
             createdAt: new Date().toISOString(),
             completedAt: null,
             completedDateKey: null,
+            recurrence: { type: "none", weekdays: [] },
           },
           {
             id: uid(),
@@ -317,6 +448,7 @@
             createdAt: new Date().toISOString(),
             completedAt: new Date().toISOString(),
             completedDateKey: today,
+            recurrence: { type: "none", weekdays: [] },
           },
         ],
         [yest]: [
@@ -331,6 +463,7 @@
             createdAt: new Date().toISOString(),
             completedAt: null,
             completedDateKey: null,
+            recurrence: { type: "none", weekdays: [] },
           },
           {
             id: uid(),
@@ -343,6 +476,7 @@
             createdAt: new Date().toISOString(),
             completedAt: null,
             completedDateKey: null,
+            recurrence: { type: "none", weekdays: [] },
           },
         ],
       },
@@ -415,6 +549,8 @@
   let toastTimer = null;
   let filterTag = "all";
   let filterEisen = "all";
+  let searchFocusTaskId = null;
+  let searchQuery = "";
   let waterTimerId = null;
   let swRegistration = null;
   let activeTab = loadActiveTab();
@@ -446,9 +582,16 @@
     taskImportant: $("#task-important"),
     taskUrgent: $("#task-urgent"),
     taskTags: $("#task-tags"),
+    taskRecurrence: $("#task-recurrence"),
+    taskWeekdayPicks: $("#task-weekday-picks"),
     filterTag: $("#filter-tag"),
     filterEisen: $("#filter-eisen"),
     btnClearFilters: $("#btn-clear-filters"),
+    btnClearSearchFocus: $("#btn-clear-search-focus"),
+    globalSearch: $("#global-search"),
+    searchResults: $("#search-results"),
+    btnThemeToggle: $("#btn-theme-toggle"),
+    themeToggleLabel: $("#theme-toggle-label"),
     kanban: $("#kanban"),
     tasksEmpty: $("#tasks-empty"),
     tasksFilteredEmpty: $("#tasks-filtered-empty"),
@@ -535,18 +678,61 @@
     return getTodayTasks().find((t) => t.id === id) || null;
   }
 
+  function spawnNextOccurrence(completedTask) {
+    if (!isRecurring(completedTask)) return null;
+    const baseKey = completedTask.completedDateKey || todayKey();
+    const nextKey = nextOccurrenceDateKey(baseKey, completedTask.recurrence);
+    if (!nextKey) return null;
+    if (!state.tasksByDate[nextKey]) state.tasksByDate[nextKey] = [];
+    const next = {
+      id: uid(),
+      text: completedTask.text,
+      status: "todo",
+      done: false,
+      important: !!completedTask.important,
+      urgent: !!completedTask.urgent,
+      tags: Array.isArray(completedTask.tags) ? completedTask.tags.slice() : [],
+      recurrence: cloneRecurrence(completedTask.recurrence),
+      createdAt: new Date().toISOString(),
+      completedAt: null,
+      completedDateKey: null,
+    };
+    state.tasksByDate[nextKey].unshift(next);
+    return { next, nextKey };
+  }
+
   function setTaskStatus(task, status) {
+    const prev = task.status;
     status = normalizeStatus(status, false);
     task.status = status;
     if (status === "done") {
       task.done = true;
       task.completedAt = new Date().toISOString();
       task.completedDateKey = todayKey();
-    } else {
-      task.done = false;
-      task.completedAt = null;
-      task.completedDateKey = null;
+      if (prev !== "done" && isRecurring(task)) {
+        return spawnNextOccurrence(task);
+      }
+      return null;
     }
+    task.done = false;
+    task.completedAt = null;
+    task.completedDateKey = null;
+    return null;
+  }
+
+  function toastStatusChange(status, spawned) {
+    if (spawned) {
+      const label = recurrenceSummary(spawned.next.recurrence);
+      const when =
+        spawned.nextKey === todayKey()
+          ? "今日待辦"
+          : spawned.nextKey === addDaysToKey(todayKey(), 1)
+            ? "明日待辦"
+            : spawned.nextKey;
+      toast(`已完成並建立下次「${label}」→ ${when}`);
+      return;
+    }
+    toast(`已移至「${STATUS_LABEL[status]}」`);
   }
 
   function collectAllTags() {
@@ -579,6 +765,7 @@
   }
 
   function passesFilters(t) {
+    if (searchFocusTaskId && t.id !== searchFocusTaskId) return false;
     if (filterTag !== "all") {
       const tags = t.tags || [];
       if (!tags.includes(filterTag)) return false;
@@ -590,13 +777,22 @@
   function updateFilterClearBtn() {
     const active = filterTag !== "all" || filterEisen !== "all";
     els.btnClearFilters.hidden = !active;
+    if (els.btnClearSearchFocus) {
+      els.btnClearSearchFocus.hidden = !searchFocusTaskId;
+    }
+  }
+
+  function clearSearchFocus() {
+    searchFocusTaskId = null;
+    updateFilterClearBtn();
   }
 
   function createTaskCard(task) {
     const li = document.createElement("li");
     li.className =
       "task-card" +
-      (task.important && task.urgent ? " task-card--priority-boost" : "");
+      (task.important && task.urgent ? " task-card--priority-boost" : "") +
+      (searchFocusTaskId && searchFocusTaskId === task.id ? " task-card--search-focus" : "");
     li.dataset.id = task.id;
     li.draggable = true;
 
@@ -610,13 +806,15 @@
     check.title = task.status === "done" ? "移回待辦" : "標為完成";
     check.setAttribute("aria-label", check.title);
     check.addEventListener("change", () => {
+      let spawned = null;
       if (check.checked) {
-        setTaskStatus(task, "done");
+        spawned = setTaskStatus(task, "done");
       } else {
         setTaskStatus(task, "todo");
       }
       persist();
       renderTasks();
+      if (spawned) toastStatusChange("done", spawned);
     });
 
     const text = document.createElement("span");
@@ -645,6 +843,12 @@
       chip.textContent = tag;
       badges.appendChild(chip);
     });
+    if (isRecurring(task)) {
+      const rb = document.createElement("span");
+      rb.className = "recur-badge";
+      rb.textContent = recurrenceSummary(task.recurrence);
+      badges.appendChild(rb);
+    }
 
     const flags = document.createElement("div");
     flags.className = "task-card__flags";
@@ -695,6 +899,69 @@
       }
     });
 
+    const recurWrap = document.createElement("div");
+    recurWrap.className = "task-card__recur";
+    const recurLabel = document.createElement("span");
+    recurLabel.className = "task-card__recur-label";
+    recurLabel.textContent = "重複";
+    const recurSelect = document.createElement("select");
+    recurSelect.className = "task-card__recur-select";
+    recurSelect.title = "重複規則";
+    RECUR_TYPES.forEach((type) => {
+      const opt = document.createElement("option");
+      opt.value = type;
+      opt.textContent = RECUR_LABEL[type];
+      recurSelect.appendChild(opt);
+    });
+    const rec = normalizeRecurrence(task.recurrence);
+    recurSelect.value = rec.type;
+
+    const cardWeekdays = document.createElement("div");
+    cardWeekdays.className = "weekday-picks";
+    cardWeekdays.hidden = rec.type !== "weekly";
+    [1, 2, 3, 4, 5, 6, 0].forEach((d) => {
+      const lab = document.createElement("label");
+      lab.className = "weekday-pick";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = String(d);
+      cb.checked = rec.weekdays.includes(d);
+      cb.addEventListener("change", () => {
+        const picked = Array.from(
+          cardWeekdays.querySelectorAll('input[type="checkbox"]:checked')
+        ).map((el) => Number(el.value));
+        task.recurrence = normalizeRecurrence({
+          type: "weekly",
+          weekdays: picked.length ? picked : [weekdayIndex(todayKey())],
+        });
+        persist();
+        renderTasks();
+      });
+      lab.append(cb, document.createTextNode(DOW_ZH[d]));
+      cardWeekdays.appendChild(lab);
+    });
+
+    recurSelect.addEventListener("change", () => {
+      const type = recurSelect.value;
+      if (type === "weekly") {
+        const picked = Array.from(
+          cardWeekdays.querySelectorAll('input[type="checkbox"]:checked')
+        ).map((el) => Number(el.value));
+        task.recurrence = normalizeRecurrence({
+          type: "weekly",
+          weekdays: picked.length ? picked : [weekdayIndex(todayKey())],
+        });
+        cardWeekdays.hidden = false;
+      } else {
+        task.recurrence = normalizeRecurrence({ type });
+        cardWeekdays.hidden = true;
+      }
+      persist();
+      renderTasks();
+    });
+
+    recurWrap.append(recurLabel, recurSelect, cardWeekdays);
+
     const actions = document.createElement("div");
     actions.className = "task-card__actions";
 
@@ -712,7 +979,7 @@
     });
     actions.appendChild(del);
 
-    li.append(top, badges, flags, tagsInput, actions);
+    li.append(top, badges, flags, tagsInput, recurWrap, actions);
 
     li.addEventListener("dragstart", (e) => {
       if (e.target.closest("input, button, label, select, textarea, a")) {
@@ -757,10 +1024,10 @@
       const task = findTask(id);
       if (!task) return;
       if (task.status === status) return;
-      setTaskStatus(task, status);
+      const spawned = setTaskStatus(task, status);
       persist();
       renderTasks();
-      toast(`已移至「${STATUS_LABEL[status]}」`);
+      toastStatusChange(status, spawned);
     };
 
     col.addEventListener("dragover", onDragOver);
@@ -851,6 +1118,7 @@
       important: !!els.taskImportant.checked,
       urgent: !!els.taskUrgent.checked,
       tags: parseTags(els.taskTags.value),
+      recurrence: readComposerRecurrence(),
       createdAt: new Date().toISOString(),
       completedAt: null,
       completedDateKey: null,
@@ -858,6 +1126,7 @@
     els.taskImportant.checked = false;
     els.taskUrgent.checked = false;
     els.taskTags.value = "";
+    resetComposerRecurrence();
     persist();
     renderTasks();
   }
@@ -1370,6 +1639,258 @@
     renderNotes();
   }
 
+
+  // —— Theme (localStorage only; not in JSON export) ——
+  function getStoredTheme() {
+    try {
+      const t = localStorage.getItem(THEME_KEY);
+      if (t === "dark" || t === "light") return t;
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
+  function systemPrefersDark() {
+    try {
+      return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    } catch {
+      return false;
+    }
+  }
+
+  function resolveTheme() {
+    const stored = getStoredTheme();
+    if (stored) return stored;
+    return systemPrefersDark() ? "dark" : "light";
+  }
+
+  function applyTheme(theme) {
+    const dark = theme === "dark";
+    document.documentElement.classList.toggle("theme-dark", dark);
+    if (els.btnThemeToggle) {
+      els.btnThemeToggle.setAttribute("aria-pressed", dark ? "true" : "false");
+      els.btnThemeToggle.title = dark ? "切換為淺色模式" : "切換為深色模式";
+    }
+    if (els.themeToggleLabel) {
+      els.themeToggleLabel.textContent = dark ? "淺色" : "深色";
+    }
+  }
+
+  function persistTheme(theme) {
+    try {
+      localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function toggleTheme() {
+    const next = resolveTheme() === "dark" ? "light" : "dark";
+    persistTheme(next);
+    applyTheme(next);
+  }
+
+  function initTheme() {
+    applyTheme(resolveTheme());
+    try {
+      const mq = window.matchMedia("(prefers-color-scheme: dark)");
+      const onChange = () => {
+        if (getStoredTheme() == null) applyTheme(resolveTheme());
+      };
+      if (mq.addEventListener) mq.addEventListener("change", onChange);
+      else if (mq.addListener) mq.addListener(onChange);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  // —— Global search (not persisted in export) ——
+  function normalizeSearch(s) {
+    return String(s || "").toLowerCase();
+  }
+
+  function includesQuery(hay, q) {
+    if (!q) return false;
+    return normalizeSearch(hay).includes(q);
+  }
+
+  function collectSearchResults(rawQuery) {
+    const q = normalizeSearch(rawQuery.trim());
+    if (!q) return [];
+    const results = [];
+    const today = todayKey();
+
+    // Tasks: all dates (visible titles)
+    const dateKeys = Object.keys(state.tasksByDate || {}).sort().reverse();
+    for (const dk of dateKeys) {
+      const list = state.tasksByDate[dk] || [];
+      for (const t of list) {
+        if (!t || !t.text) continue;
+        if (!includesQuery(t.text, q)) continue;
+        results.push({
+          kind: "task",
+          id: t.id,
+          dateKey: dk,
+          title: t.text,
+          snippet: dk === today ? "今日任務" : `任務 · ${dk}`,
+        });
+        if (results.length >= 40) return results;
+      }
+    }
+
+    for (const e of state.events || []) {
+      if (!e) continue;
+      const hitTitle = includesQuery(e.title, q);
+      const hitNotes = includesQuery(e.notes, q);
+      if (!hitTitle && !hitNotes) continue;
+      results.push({
+        kind: "event",
+        id: e.id,
+        dateKey: e.date,
+        title: e.title,
+        snippet: hitNotes && !hitTitle ? String(e.notes).slice(0, 80) : `${e.date} ${e.start || ""}`.trim(),
+      });
+      if (results.length >= 40) return results;
+    }
+
+    if (includesQuery(state.scratch, q)) {
+      results.push({
+        kind: "scratch",
+        id: "scratch",
+        title: "草稿",
+        snippet: String(state.scratch).replace(/\s+/g, " ").trim().slice(0, 80),
+      });
+    }
+
+    for (const n of state.notes || []) {
+      if (!n || !n.body) continue;
+      if (!includesQuery(n.body, q)) continue;
+      results.push({
+        kind: "note",
+        id: n.id,
+        title: String(n.body).replace(/\s+/g, " ").trim().slice(0, 60),
+        snippet: formatNoteTime(n.createdAt) || "筆記",
+      });
+      if (results.length >= 40) return results;
+    }
+
+    return results;
+  }
+
+  function hideSearchResults() {
+    if (!els.searchResults) return;
+    els.searchResults.hidden = true;
+    els.searchResults.innerHTML = "";
+  }
+
+  function renderSearchResults(rawQuery) {
+    if (!els.searchResults) return;
+    const q = rawQuery.trim();
+    searchQuery = q;
+    if (!q) {
+      hideSearchResults();
+      if (searchFocusTaskId) {
+        clearSearchFocus();
+        renderTasks();
+      }
+      return;
+    }
+    const results = collectSearchResults(q);
+    els.searchResults.innerHTML = "";
+    els.searchResults.hidden = false;
+    if (results.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "search-results__empty";
+      empty.textContent = "找不到相符項目";
+      els.searchResults.appendChild(empty);
+      return;
+    }
+    const kindLabel = { task: "任務", event: "行程", note: "筆記", scratch: "草稿" };
+    results.forEach((r) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "search-results__item";
+      btn.setAttribute("role", "option");
+      const kind = document.createElement("span");
+      kind.className = "search-results__kind";
+      kind.textContent = kindLabel[r.kind] || "";
+      const title = document.createElement("span");
+      title.className = "search-results__title";
+      title.textContent = r.title;
+      btn.append(kind, title);
+      if (r.snippet) {
+        const sn = document.createElement("span");
+        sn.className = "search-results__snippet";
+        sn.textContent = r.snippet;
+        btn.appendChild(sn);
+      }
+      btn.addEventListener("click", () => {
+        applySearchJump(r);
+      });
+      els.searchResults.appendChild(btn);
+    });
+  }
+
+  function applySearchJump(r) {
+    hideSearchResults();
+    if (r.kind === "task") {
+      setActiveTab("tasks");
+      // If task is on another day, still focus if present today; otherwise jump tab only
+      const todayList = getTodayTasks();
+      const onToday = todayList.some((t) => t.id === r.id);
+      if (onToday) {
+        searchFocusTaskId = r.id;
+      } else if (r.dateKey && state.tasksByDate[r.dateKey]) {
+        // Show toast for non-today tasks; pull focus only when on today board
+        searchFocusTaskId = null;
+        toast(`該任務在 ${r.dateKey}（看板只顯示今日）`);
+      } else {
+        searchFocusTaskId = r.id;
+      }
+      updateFilterClearBtn();
+      renderTasks();
+      const card =
+        els.kanban &&
+        Array.from(els.kanban.querySelectorAll(".task-card")).find((el) => el.dataset.id === r.id);
+      if (card) card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+      return;
+    }
+    if (r.kind === "event") {
+      clearSearchFocus();
+      renderTasks();
+      if (r.dateKey) selectedDate = r.dateKey;
+      setActiveTab("calendar");
+      renderWeekStrip();
+      renderEvents();
+      return;
+    }
+    if (r.kind === "note" || r.kind === "scratch") {
+      clearSearchFocus();
+      renderTasks();
+      setActiveTab("notes");
+      renderNotes();
+      if (r.kind === "scratch" && els.scratchPad) {
+        els.scratchPad.focus();
+      }
+      return;
+    }
+  }
+
+  function onGlobalSearchInput() {
+    const q = els.globalSearch ? els.globalSearch.value : "";
+    if (!q.trim()) {
+      searchQuery = "";
+      hideSearchResults();
+      if (searchFocusTaskId) {
+        clearSearchFocus();
+        renderTasks();
+      }
+      return;
+    }
+    renderSearchResults(q);
+  }
+
   // —— Export / Import ——
   function buildExportPayload() {
     return {
@@ -1535,6 +2056,10 @@
     selectedDate = todayKey();
     filterTag = "all";
     filterEisen = "all";
+    searchFocusTaskId = null;
+    searchQuery = "";
+    if (els.globalSearch) els.globalSearch.value = "";
+    hideSearchResults();
     els.filterEisen.value = "all";
     renderAll();
     if (state.waterReminder.enabled) {
@@ -1724,6 +2249,10 @@
     selectedDate = todayKey();
     filterTag = "all";
     filterEisen = "all";
+    searchFocusTaskId = null;
+    searchQuery = "";
+    if (els.globalSearch) els.globalSearch.value = "";
+    hideSearchResults();
     els.filterEisen.value = "all";
     renderAll();
     updateWaterUI();
@@ -1764,6 +2293,37 @@
     els.filterEisen.value = "all";
     renderTasks();
   });
+  if (els.btnClearSearchFocus) {
+    els.btnClearSearchFocus.addEventListener("click", () => {
+      clearSearchFocus();
+      if (els.globalSearch) els.globalSearch.value = "";
+      searchQuery = "";
+      hideSearchResults();
+      renderTasks();
+    });
+  }
+  if (els.taskRecurrence) {
+    els.taskRecurrence.addEventListener("change", syncComposerWeekdayVisibility);
+    syncComposerWeekdayVisibility();
+  }
+  if (els.globalSearch) {
+    els.globalSearch.addEventListener("input", onGlobalSearchInput);
+    els.globalSearch.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        els.globalSearch.value = "";
+        onGlobalSearchInput();
+        els.globalSearch.blur();
+      }
+    });
+  }
+  document.addEventListener("click", (e) => {
+    if (!els.searchResults || els.searchResults.hidden) return;
+    const wrap = document.getElementById("topbar-search");
+    if (wrap && !wrap.contains(e.target)) hideSearchResults();
+  });
+  if (els.btnThemeToggle) {
+    els.btnThemeToggle.addEventListener("click", toggleTheme);
+  }
 
   document.querySelectorAll(".mod-tabs__btn").forEach((btn) => {
     btn.addEventListener("click", () => setActiveTab(btn.dataset.tab));
@@ -1847,6 +2407,7 @@
 
   els.headerDate.dataset.day = todayKey();
   updateServerHint();
+  initTheme();
   renderAll();
 
   registerServiceWorker().then(() => {
