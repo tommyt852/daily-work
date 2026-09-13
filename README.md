@@ -17,6 +17,50 @@ python3 -m http.server 8080
 
 亦可直接用瀏覽器開啟 `index.html`（部分瀏覽器對 `file://` 的 localStorage／Service Worker 行為可能不同，建議用靜態伺服器）。
 
+## 本機 PowerShell 伺服器（自動讀寫 JSON）
+
+喺**放 JSON 嘅資料夾**開 PowerShell，執行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File path\to\server.ps1
+```
+
+（或者把 `server.ps1` 同 `config.js`、靜態檔一齊放喺工作目錄，然後 `cd` 過去再執行。）
+
+- 工作目錄（`Get-Location`）會用來讀寫 `daily-work.json`。
+- 靜態頁面（`index.html`、`config.js`、`app.js` 等）由 **script 所在目錄**提供。
+- 瀏覽器請開 **http://127.0.0.1:8787/** ，而**唔好**用 GitHub Pages 去打本機 API。
+- 頂部「匯出 JSON／匯入 JSON」檔案功能仍然可用。
+- 改 IP／port 只編輯 `config.js`，然後**重開** PowerShell server。
+
+```js
+window.DAILY_WORK_SERVER = {
+  host: "127.0.0.1",
+  port: 8787,
+  path: "/api/data"
+};
+```
+
+### 點解唔能夠用 GitHub Pages 打本機 API
+
+GitHub Pages 係 **HTTPS**。瀏覽器會阻擋 HTTPS 頁面去呼叫 `http://127.0.0.1`（混合內容 / mixed content）。所以 `server.ps1` 必須一併提供靜態站，你要由 `http://127.0.0.1:8787/` 開啟工作台，先可以「從伺服器載入／儲存到伺服器」。
+
+### 如果 Listen 失敗
+
+HttpListener 有時需要 URL 預約。以**系統管理員**開 PowerShell：
+
+```powershell
+netsh http add urlacl url=http://127.0.0.1:8787/ user=Everyone
+```
+
+`server.ps1` 若 `127.0.0.1` 失敗會再試 `http://localhost:8787/`；localhost 都要預約就再加：
+
+```powershell
+netsh http add urlacl url=http://localhost:8787/ user=Everyone
+```
+
+（port 若已改過 `config.js`，urlacl 都要跟新 port。）Ctrl+C 停止伺服器。
+
 ## 啟用 GitHub Pages
 
 1. 將此資料夾推送到 GitHub 倉庫（例如倉庫名 `daily-work`）。
@@ -26,7 +70,7 @@ python3 -m http.server 8080
 
 **https://tommyt852.github.io/daily-work/**
 
-（路徑需與倉庫名稱一致；本站使用相對路徑 `./styles.css`、`./app.js`、`./sw.js`，適合 project Pages 的 `/daily-work/` 子路徑。）
+（路徑需與倉庫名稱一致；本站使用相對路徑 `./styles.css`、`./config.js`、`./app.js`、`./sw.js`，適合 project Pages 的 `/daily-work/` 子路徑。）
 
 ## 功能摘要
 
@@ -37,7 +81,7 @@ python3 -m http.server 8080
 - **任務** — Kanban 看板
 - **行程** — 本週日曆
 - **筆記** — 草稿與快速筆記
-- **提醒** — 飲水提醒設定
+- **提醒** — 飲水提醒設定、本機伺服器載入／儲存
 
 只顯示目前啟用的模組；上次選取的分頁會記在 localStorage。快捷鍵 `1`–`4`（未聚焦於輸入框時）可切換。
 
@@ -91,6 +135,7 @@ python3 -m http.server 8080
 - 匯出格式版本 **3**（`daily-work-YYYY-MM-DD.json`）。
 - 舊版 JSON 仍可匯入：舊優先級對應為 high→重要+緊急、med→重要、low→皆否；`done` 對應 status；忽略舊的 `habits`。
 - 飲水設定會一併匯出／匯入。
+- 「提醒」分頁有「本機伺服器」：從 `config.js` 嘅位址 GET／POST 同一份匯出 envelope；載入前會確認取代（文案同檔案匯入）。
 
 ### 其他
 
@@ -103,8 +148,10 @@ python3 -m http.server 8080
 |------|------|
 | `index.html` | 主頁面 |
 | `styles.css` | 樣式 |
+| `config.js` | 本機伺服器 host／port／API 路徑（瀏覽器同 `server.ps1` 共用） |
 | `app.js` | 邏輯與 localStorage |
 | `sw.js` | Service Worker（飲水提醒通知輔助） |
+| `server.ps1` | 本機 HttpListener：靜態站 + `/api/data` 讀寫 `daily-work.json` |
 | `README.md` | 本說明 |
 
 無需 `package.json`、無需建置。

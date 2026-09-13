@@ -1028,6 +1028,62 @@ body {
   max-width: 40rem;
 }
 
+/* —— Local server —— */
+.server-block {
+  margin-top: 1.25rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+
+.server-block__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.server-block__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.server-block__hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--ink-faint);
+  font-family: var(--mono);
+  word-break: break-all;
+}
+
+.server-block__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.server-block__aside {
+  margin: 0.85rem 0 0;
+  font-size: 0.78rem;
+  color: var(--ink-faint);
+  line-height: 1.5;
+  max-width: 40rem;
+}
+
+.server-block code {
+  font-size: 0.85em;
+  font-family: var(--mono);
+  background: var(--surface);
+  padding: 0.05rem 0.3rem;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+}
+
 /* —— Empty states —— */
 .empty {
   text-align: center;
@@ -1150,7 +1206,7 @@ body {
   font-size: 0.85rem;
   box-shadow: var(--shadow-modal);
   z-index: 100;
-  max-width: min(90vw, 360px);
+  max-width: min(90vw, 420px);
   text-align: center;
 }
 

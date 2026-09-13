@@ -487,6 +487,9 @@
     waterStatus: $("#water-status"),
     waterPermMsg: $("#water-perm-msg"),
     btnWaterTest: $("#btn-water-test"),
+    serverUrlHint: $("#server-url-hint"),
+    btnServerImport: $("#btn-server-import"),
+    btnServerExport: $("#btn-server-export"),
     toast: $("#toast"),
   };
 
@@ -1510,6 +1513,171 @@
     };
   }
 
+  const IMPORT_REPLACE_CONFIRM =
+    "匯入會「取代」目前本機所有工作台資料（任務、行程、筆記、草稿、飲水提醒）。\n確定繼續？";
+
+  function confirmReplaceImport() {
+    return confirm(IMPORT_REPLACE_CONFIRM);
+  }
+
+  function applyImportedState(normalized) {
+    clearWaterTimer();
+    state = {
+      version: DATA_VERSION,
+      seeded: false,
+      tasksByDate: normalized.tasksByDate,
+      events: normalized.events,
+      scratch: normalized.scratch,
+      notes: normalized.notes,
+      waterReminder: normalized.waterReminder,
+    };
+    persist();
+    selectedDate = todayKey();
+    filterTag = "all";
+    filterEisen = "all";
+    els.filterEisen.value = "all";
+    renderAll();
+    if (state.waterReminder.enabled) {
+      enableWaterReminder();
+    } else {
+      updateWaterUI();
+    }
+  }
+
+  function toastImportSuccess(normalized) {
+    const when = normalized._exportedAt
+      ? `（備份時間：${formatNoteTime(normalized._exportedAt)}）`
+      : "";
+    toast(`匯入成功${when}`);
+  }
+
+  function getServerConfig() {
+    const raw = (typeof window !== "undefined" && window.DAILY_WORK_SERVER) || {};
+    const host = String(raw.host != null ? raw.host : "127.0.0.1").trim() || "127.0.0.1";
+    const portNum = Number(raw.port);
+    const port = Number.isFinite(portNum) && portNum > 0 ? portNum : 8787;
+    let path = String(raw.path != null ? raw.path : "/api/data").trim() || "/api/data";
+    if (!path.startsWith("/")) path = `/${path}`;
+    path = path.replace(/\/+$/, "") || "/api/data";
+    return { host, port, path };
+  }
+
+  function getServerOrigin() {
+    const { host, port } = getServerConfig();
+    return `http://${host}:${port}`;
+  }
+
+  function getServerApiUrl() {
+    const { path } = getServerConfig();
+    return `${getServerOrigin()}${path}`;
+  }
+
+  function statusLabel(res) {
+    const text = (res && res.statusText ? String(res.statusText) : "").trim();
+    return text ? `${res.status} ${text}` : String(res.status);
+  }
+
+  function toastNetworkFail() {
+    const origin = getServerOrigin();
+    toast(`連接失敗：本機伺服器未開或無法連上。請確認已執行 server.ps1，並用瀏覽器開啟 ${origin}/ 。`);
+  }
+
+  function warnMixedContent() {
+    const origin = getServerOrigin();
+    if (window.location.protocol === "https:" && origin.startsWith("http:")) {
+      toast(`無法由 HTTPS 頁面連接本機 HTTP 伺服器（混合內容被阻擋）。請改用 ${origin}/ 開啟工作台。`);
+      return true;
+    }
+    return false;
+  }
+
+  async function importFromServer() {
+    if (warnMixedContent()) return;
+    const url = getServerApiUrl();
+    let res;
+    try {
+      res = await fetch(url, {
+        method: "GET",
+        mode: "cors",
+        credentials: "omit",
+        headers: { Accept: "application/json" },
+      });
+    } catch (err) {
+      console.error(err);
+      toastNetworkFail();
+      return;
+    }
+    if (!res.ok) {
+      let detail = "";
+      try {
+        const errBody = await res.json();
+        if (errBody && errBody.error) detail = `：${errBody.error}`;
+      } catch {
+        /* ignore */
+      }
+      toast(`從伺服器載入失敗（${statusLabel(res)}）${detail}`);
+      return;
+    }
+    let parsed;
+    try {
+      parsed = await res.json();
+    } catch {
+      toast(`從伺服器載入失敗（${statusLabel(res)}）：回傳不是有效的 JSON`);
+      return;
+    }
+    try {
+      const normalized = normalizeImportedData(parsed);
+      if (!confirmReplaceImport()) {
+        toast("已取消匯入");
+        return;
+      }
+      applyImportedState(normalized);
+      const when = normalized._exportedAt
+        ? `（備份時間：${formatNoteTime(normalized._exportedAt)}）`
+        : "";
+      toast(`已從伺服器載入（${statusLabel(res)}）${when}`);
+    } catch (err) {
+      console.error(err);
+      toast(err && err.message ? err.message : "匯入失敗：檔案格式不正確");
+    }
+  }
+
+  async function exportToServer() {
+    if (warnMixedContent()) return;
+    const url = getServerApiUrl();
+    let res;
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        mode: "cors",
+        credentials: "omit",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(buildExportPayload()),
+      });
+    } catch (err) {
+      console.error(err);
+      toastNetworkFail();
+      return;
+    }
+    if (!res.ok) {
+      let detail = "";
+      try {
+        const errBody = await res.json();
+        if (errBody && errBody.error) detail = `：${errBody.error}`;
+      } catch {
+        /* ignore */
+      }
+      toast(`儲存到伺服器失敗（${statusLabel(res)}）${detail}`);
+      return;
+    }
+    toast(`已儲存到伺服器（${statusLabel(res)}）`);
+  }
+
+  function updateServerHint() {
+    if (!els.serverUrlHint) return;
+    els.serverUrlHint.textContent = getServerApiUrl();
+  }
+
   function importJsonFile(file) {
     if (!file) return;
     const reader = new FileReader();
@@ -1523,38 +1691,12 @@
           throw new Error("不是有效的 JSON 檔。");
         }
         const normalized = normalizeImportedData(parsed);
-        const ok = confirm(
-          "匯入會「取代」目前本機所有工作台資料（任務、行程、筆記、草稿、飲水提醒）。\n確定繼續？"
-        );
-        if (!ok) {
+        if (!confirmReplaceImport()) {
           toast("已取消匯入");
           return;
         }
-        clearWaterTimer();
-        state = {
-          version: DATA_VERSION,
-          seeded: false,
-          tasksByDate: normalized.tasksByDate,
-          events: normalized.events,
-          scratch: normalized.scratch,
-          notes: normalized.notes,
-          waterReminder: normalized.waterReminder,
-        };
-        persist();
-        selectedDate = todayKey();
-        filterTag = "all";
-        filterEisen = "all";
-        els.filterEisen.value = "all";
-        renderAll();
-        if (state.waterReminder.enabled) {
-          enableWaterReminder();
-        } else {
-          updateWaterUI();
-        }
-        const when = normalized._exportedAt
-          ? `（備份時間：${formatNoteTime(normalized._exportedAt)}）`
-          : "";
-        toast(`匯入成功${when}`);
+        applyImportedState(normalized);
+        toastImportSuccess(normalized);
       } catch (err) {
         console.error(err);
         toast(err && err.message ? err.message : "匯入失敗：檔案格式不正確");
@@ -1658,6 +1800,16 @@
     importJsonFile(file);
   });
   els.btnWipeSeed.addEventListener("click", wipeSeedData);
+  if (els.btnServerImport) {
+    els.btnServerImport.addEventListener("click", () => {
+      importFromServer();
+    });
+  }
+  if (els.btnServerExport) {
+    els.btnServerExport.addEventListener("click", () => {
+      exportToServer();
+    });
+  }
   els.btnAddEvent.addEventListener("click", () => openEventModal(null));
   els.eventForm.addEventListener("submit", saveEventFromForm);
   els.eventModalClose.addEventListener("click", closeEventModal);
@@ -1694,6 +1846,7 @@
   }, 60 * 1000);
 
   els.headerDate.dataset.day = todayKey();
+  updateServerHint();
   renderAll();
 
   registerServiceWorker().then(() => {

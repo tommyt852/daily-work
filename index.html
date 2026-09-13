@@ -252,6 +252,26 @@
             使用瀏覽器通知（Windows 的 Chrome／Edge 會顯示於系統通知中心）。無推播伺服器：分頁開啟或縮到工作列時依間隔提醒；關閉分頁或瀏覽器後即停止。
           </p>
         </div>
+
+        <div class="server-block" id="server-block">
+          <div class="server-block__head">
+            <h3 class="server-block__title">本機伺服器</h3>
+            <p class="server-block__hint" id="server-url-hint">—</p>
+          </div>
+          <div class="server-block__controls">
+            <button type="button" class="btn btn--ghost" id="btn-server-import" title="由本機伺服器載入 JSON（會取代現有資料）">
+              從伺服器載入
+            </button>
+            <button type="button" class="btn btn--primary" id="btn-server-export" title="將目前資料儲存到本機伺服器">
+              儲存到伺服器
+            </button>
+          </div>
+          <p class="server-block__aside">
+            伺服器位址喺 <code>config.js</code> 設定（改完要重開 PowerShell server）。GitHub Pages 係 HTTPS，瀏覽器唔可以呼叫
+            <code>http://127.0.0.1</code>（混合內容被阻擋）。請用 <code>server.ps1</code> 一併提供靜態頁面，喺瀏覽器開
+            <code>http://127.0.0.1:8787/</code>，而唔好用 GitHub Pages 去打本機 API。頂部「匯出 JSON／匯入 JSON」檔案功能仍然可用。
+          </p>
+        </div>
       </section>
     </main>
 
@@ -301,6 +321,7 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
+  <script src="./config.js"></script>
   <script src="./app.js" defer></script>
 </body>
 </html>
