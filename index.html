@@ -120,6 +120,15 @@
             />
           </label>
           <label class="composer-meta__field">
+            <span class="composer-meta__label">到期日</span>
+            <input
+              type="date"
+              id="task-due-date"
+              class="composer-meta__input"
+              title="選填：香港日曆到期日"
+            />
+          </label>
+          <label class="composer-meta__field">
             <span class="composer-meta__label">重複</span>
             <select id="task-recurrence" class="composer-meta__select" title="重複規則">
               <option value="none">無</option>
@@ -266,7 +275,7 @@
         <div class="panel__head">
           <div>
             <h2 id="reminders-heading">提醒</h2>
-            <p class="panel__meta">本機通知 · 關閉分頁後不會再提醒</p>
+            <p class="panel__meta">飲水、任務與行程 · 本機通知 · 關閉分頁後不會再提醒</p>
           </div>
         </div>
 
@@ -294,6 +303,34 @@
           <p class="water-block__note" id="water-perm-msg" hidden></p>
           <p class="water-block__aside">
             使用瀏覽器通知（Windows 的 Chrome／Edge 會顯示於系統通知中心）。無推播伺服器：分頁開啟或縮到工作列時依間隔提醒；關閉分頁或瀏覽器後即停止。
+          </p>
+        </div>
+
+        <div class="water-block" id="alerts-block">
+          <div class="water-block__head">
+            <h3 class="water-block__title">任務／行程提醒</h3>
+            <p class="water-block__hint" id="alert-status">關閉中</p>
+          </div>
+          <div class="water-block__controls">
+            <label class="water-toggle">
+              <input type="checkbox" id="alert-tasks-enabled" />
+              <span>任務到期／逾期</span>
+            </label>
+            <label class="water-toggle">
+              <input type="checkbox" id="alert-events-enabled" />
+              <span>行程開始</span>
+            </label>
+            <label class="composer-meta__field">
+              <span class="composer-meta__label">行程提前提醒</span>
+              <select id="alert-event-lead" class="composer-meta__select" title="行程開始前多久提醒">
+                <option value="15">15 分鐘前</option>
+                <option value="0">唔使提前</option>
+              </select>
+            </label>
+          </div>
+          <p class="water-block__note" id="alert-perm-msg" hidden></p>
+          <p class="water-block__aside">
+            共用同一套瀏覽器通知權限。任務：到期日為今日時通知一次；逾期每日最多一次（唔會洗版）。行程：開始時通知，可選提前 15 分鐘。分頁需保持開啟；關閉分頁後不會再提醒。
           </p>
         </div>
 

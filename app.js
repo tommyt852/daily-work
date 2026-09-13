@@ -11,8 +11,8 @@
   const STORAGE_KEY = "daily-workbench:v1";
   const TAB_KEY = "daily-workbench:active-tab";
   const THEME_KEY = "daily-workbench:theme";
-  const EXPORT_VERSION = 4;
-  const DATA_VERSION = 4;
+  const EXPORT_VERSION = 5;
+  const DATA_VERSION = 5;
   const DOW_ZH = ["日", "一", "二", "三", "四", "五", "六"];
   const WATER_INTERVALS = [30, 45, 60, 90];
   const WATER_MIN_GAP_MS = 25 * 1000;
@@ -146,6 +146,47 @@
       .map((t) => t.slice(0, 16));
   }
 
+  function isDateKey(s) {
+    return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+  }
+
+  function normalizeDueDate(raw) {
+    if (raw == null || raw === "") return null;
+    if (isDateKey(raw)) return raw;
+    return null;
+  }
+
+  function isTaskOverdue(task, today = todayKey()) {
+    if (!task || task.status === "done" || task.done) return false;
+    const due = normalizeDueDate(task.dueDate);
+    if (!due) return false;
+    return due < today;
+  }
+
+  function isTaskDueToday(task, today = todayKey()) {
+    if (!task || task.status === "done" || task.done) return false;
+    return normalizeDueDate(task.dueDate) === today;
+  }
+
+  function formatDueLabel(due) {
+    if (!due) return "";
+    const today = todayKey();
+    if (due === today) return "今日到期";
+    if (due === addDaysToKey(today, 1)) return "明日到期";
+    if (due === yesterdayKey()) return "昨日到期";
+    const [, m, d] = due.split("-");
+    return `到期 ${Number(m)}/${Number(d)}`;
+  }
+
+  function advanceDueDate(dueDate, recurrence) {
+    const due = normalizeDueDate(dueDate);
+    if (!due) return null;
+    const r = normalizeRecurrence(recurrence);
+    if (r.type === "none") return due;
+    // weekly: +7 days per commit-2 note; others follow nextOccurrenceDateKey
+    if (r.type === "weekly") return addDaysToKey(due, 7);
+    return nextOccurrenceDateKey(due, r) || due;
+  }
 
   const RECUR_TYPES = ["none", "daily", "weekdays", "weekly", "monthly"];
   const RECUR_LABEL = {
@@ -332,6 +373,7 @@
       urgent: flags.urgent,
       tags: parseTags(t.tags),
       recurrence: normalizeRecurrence(t.recurrence),
+      dueDate: normalizeDueDate(t.dueDate),
       createdAt: typeof t.createdAt === "string" ? t.createdAt : new Date().toISOString(),
       completedAt,
       completedDateKey,
@@ -354,10 +396,17 @@
   }
 
   function sortTasksInColumn(a, b) {
+    const over = (t) => (isTaskOverdue(t) ? 1 : 0);
+    const od = over(b) - over(a);
+    if (od !== 0) return od;
     // 重要且緊急 float to top
     const score = (t) => (t.important && t.urgent ? 2 : t.important ? 1 : 0);
     const d = score(b) - score(a);
     if (d !== 0) return d;
+    // earlier dueDate first among dated tasks
+    const da = normalizeDueDate(a.dueDate) || "9999-99-99";
+    const db = normalizeDueDate(b.dueDate) || "9999-99-99";
+    if (da !== db) return da.localeCompare(db);
     return (a.createdAt || "").localeCompare(b.createdAt || "");
   }
 
@@ -383,6 +432,31 @@
     };
   }
 
+  function defaultAlerts() {
+    return {
+      tasksEnabled: false,
+      eventsEnabled: false,
+      eventLeadMinutes: 15,
+      stamps: {},
+    };
+  }
+
+  function normalizeAlerts(a) {
+    const base = defaultAlerts();
+    if (!a || typeof a !== "object") return base;
+    const lead = Number(a.eventLeadMinutes);
+    const stamps =
+      a.stamps && typeof a.stamps === "object" && !Array.isArray(a.stamps)
+        ? { ...a.stamps }
+        : {};
+    return {
+      tasksEnabled: !!a.tasksEnabled,
+      eventsEnabled: !!a.eventsEnabled,
+      eventLeadMinutes: lead === 0 || lead === 15 ? lead : 15,
+      stamps,
+    };
+  }
+
   function ensureStateShape(data) {
     data.tasksByDate = data.tasksByDate || {};
     for (const [dk, list] of Object.entries(data.tasksByDate)) {
@@ -398,7 +472,8 @@
     // habits dropped — ignore leftover
     delete data.habits;
     data.waterReminder = normalizeWater(data.waterReminder);
-    data.version = typeof data.version === "number" ? data.version : DATA_VERSION;
+    data.alerts = normalizeAlerts(data.alerts);
+    data.version = DATA_VERSION;
     return data;
   }
 
@@ -423,6 +498,7 @@
             completedAt: null,
             completedDateKey: null,
             recurrence: { type: "none", weekdays: [] },
+            dueDate: today,
           },
           {
             id: uid(),
@@ -436,6 +512,7 @@
             completedAt: null,
             completedDateKey: null,
             recurrence: { type: "none", weekdays: [] },
+            dueDate: today,
           },
           {
             id: uid(),
@@ -449,6 +526,7 @@
             completedAt: new Date().toISOString(),
             completedDateKey: today,
             recurrence: { type: "none", weekdays: [] },
+            dueDate: null,
           },
         ],
         [yest]: [
@@ -464,6 +542,7 @@
             completedAt: null,
             completedDateKey: null,
             recurrence: { type: "none", weekdays: [] },
+            dueDate: yest,
           },
           {
             id: uid(),
@@ -477,6 +556,7 @@
             completedAt: null,
             completedDateKey: null,
             recurrence: { type: "none", weekdays: [] },
+            dueDate: null,
           },
         ],
       },
@@ -515,6 +595,7 @@
         },
       ],
       waterReminder: defaultWater(),
+      alerts: defaultAlerts(),
     };
   }
 
@@ -584,6 +665,7 @@
     taskTags: $("#task-tags"),
     taskRecurrence: $("#task-recurrence"),
     taskWeekdayPicks: $("#task-weekday-picks"),
+    taskDueDate: $("#task-due-date"),
     filterTag: $("#filter-tag"),
     filterEisen: $("#filter-eisen"),
     btnClearFilters: $("#btn-clear-filters"),
@@ -630,6 +712,11 @@
     waterStatus: $("#water-status"),
     waterPermMsg: $("#water-perm-msg"),
     btnWaterTest: $("#btn-water-test"),
+    alertTasksEnabled: $("#alert-tasks-enabled"),
+    alertEventsEnabled: $("#alert-events-enabled"),
+    alertEventLead: $("#alert-event-lead"),
+    alertStatus: $("#alert-status"),
+    alertPermMsg: $("#alert-perm-msg"),
     serverUrlHint: $("#server-url-hint"),
     btnServerImport: $("#btn-server-import"),
     btnServerExport: $("#btn-server-export"),
@@ -693,6 +780,7 @@
       urgent: !!completedTask.urgent,
       tags: Array.isArray(completedTask.tags) ? completedTask.tags.slice() : [],
       recurrence: cloneRecurrence(completedTask.recurrence),
+      dueDate: advanceDueDate(completedTask.dueDate, completedTask.recurrence),
       createdAt: new Date().toISOString(),
       completedAt: null,
       completedDateKey: null,
@@ -788,10 +876,13 @@
   }
 
   function createTaskCard(task) {
+    const overdue = isTaskOverdue(task);
     const li = document.createElement("li");
     li.className =
       "task-card" +
       (task.important && task.urgent ? " task-card--priority-boost" : "") +
+      (overdue ? " task-card--overdue" : "") +
+      (isTaskDueToday(task) ? " task-card--due-today" : "") +
       (searchFocusTaskId && searchFocusTaskId === task.id ? " task-card--search-focus" : "");
     li.dataset.id = task.id;
     li.draggable = true;
@@ -849,6 +940,18 @@
       rb.textContent = recurrenceSummary(task.recurrence);
       badges.appendChild(rb);
     }
+    if (overdue) {
+      const ob = document.createElement("span");
+      ob.className = "due-badge due-badge--overdue";
+      ob.textContent = "逾期";
+      badges.appendChild(ob);
+    } else if (task.dueDate) {
+      const db = document.createElement("span");
+      db.className =
+        "due-badge" + (isTaskDueToday(task) ? " due-badge--today" : "");
+      db.textContent = formatDueLabel(task.dueDate);
+      badges.appendChild(db);
+    }
 
     const flags = document.createElement("div");
     flags.className = "task-card__flags";
@@ -898,6 +1001,34 @@
         tagsInput.blur();
       }
     });
+
+    const dueWrap = document.createElement("div");
+    dueWrap.className = "task-card__due";
+    const dueLabel = document.createElement("span");
+    dueLabel.className = "task-card__due-label";
+    dueLabel.textContent = "到期";
+    const dueInput = document.createElement("input");
+    dueInput.type = "date";
+    dueInput.className = "task-card__due-input";
+    dueInput.title = "到期日（香港日曆日，可留空）";
+    dueInput.value = normalizeDueDate(task.dueDate) || "";
+    dueInput.addEventListener("change", () => {
+      task.dueDate = normalizeDueDate(dueInput.value);
+      persist();
+      renderTasks();
+    });
+    const dueClear = document.createElement("button");
+    dueClear.type = "button";
+    dueClear.className = "btn btn--tiny btn--ghost";
+    dueClear.textContent = "清除";
+    dueClear.title = "清除到期日";
+    dueClear.hidden = !task.dueDate;
+    dueClear.addEventListener("click", () => {
+      task.dueDate = null;
+      persist();
+      renderTasks();
+    });
+    dueWrap.append(dueLabel, dueInput, dueClear);
 
     const recurWrap = document.createElement("div");
     recurWrap.className = "task-card__recur";
@@ -979,7 +1110,7 @@
     });
     actions.appendChild(del);
 
-    li.append(top, badges, flags, tagsInput, recurWrap, actions);
+    li.append(top, badges, flags, tagsInput, dueWrap, recurWrap, actions);
 
     li.addEventListener("dragstart", (e) => {
       if (e.target.closest("input, button, label, select, textarea, a")) {
@@ -1119,6 +1250,7 @@
       urgent: !!els.taskUrgent.checked,
       tags: parseTags(els.taskTags.value),
       recurrence: readComposerRecurrence(),
+      dueDate: normalizeDueDate(els.taskDueDate && els.taskDueDate.value),
       createdAt: new Date().toISOString(),
       completedAt: null,
       completedDateKey: null,
@@ -1126,6 +1258,7 @@
     els.taskImportant.checked = false;
     els.taskUrgent.checked = false;
     els.taskTags.value = "";
+    if (els.taskDueDate) els.taskDueDate.value = "";
     resetComposerRecurrence();
     persist();
     renderTasks();
@@ -1392,6 +1525,310 @@
     if (ok) toast("已發送測試通知");
   }
 
+  // —— Task / event alerts (Web Notification API; tab must stay open) ——
+  let alertTimerId = null;
+
+  function setAlertPermMsg(text, kind) {
+    if (!els.alertPermMsg) return;
+    if (!text) {
+      els.alertPermMsg.hidden = true;
+      els.alertPermMsg.textContent = "";
+      els.alertPermMsg.className = "water-block__note";
+      return;
+    }
+    els.alertPermMsg.hidden = false;
+    els.alertPermMsg.textContent = text;
+    els.alertPermMsg.className =
+      "water-block__note" +
+      (kind === "error"
+        ? " water-block__note--error"
+        : kind === "ok"
+          ? " water-block__note--ok"
+          : "");
+  }
+
+  function updateAlertsUI() {
+    if (!state.alerts) state.alerts = defaultAlerts();
+    const a = state.alerts;
+    if (els.alertTasksEnabled) els.alertTasksEnabled.checked = !!a.tasksEnabled;
+    if (els.alertEventsEnabled) els.alertEventsEnabled.checked = !!a.eventsEnabled;
+    if (els.alertEventLead) els.alertEventLead.value = String(a.eventLeadMinutes ?? 15);
+    if (!els.alertStatus) return;
+    if (!("Notification" in window)) {
+      els.alertStatus.textContent = "此瀏覽器不支援通知";
+      return;
+    }
+    const parts = [];
+    if (a.tasksEnabled) parts.push("任務");
+    if (a.eventsEnabled) parts.push("行程");
+    const perm = Notification.permission;
+    if (parts.length === 0) {
+      els.alertStatus.textContent = "關閉中";
+    } else if (perm === "denied") {
+      els.alertStatus.textContent = "權限被拒";
+    } else if (perm === "granted") {
+      els.alertStatus.textContent = `已啟用：${parts.join("、")}`;
+    } else {
+      els.alertStatus.textContent = "等待授權";
+    }
+  }
+
+  async function showAppNotification(title, options) {
+    if (!("Notification" in window)) return false;
+    if (Notification.permission !== "granted") return false;
+    const opts = options || {};
+    try {
+      if (swRegistration && swRegistration.showNotification) {
+        await swRegistration.showNotification(title, opts);
+      } else if (navigator.serviceWorker && navigator.serviceWorker.ready) {
+        const reg = await navigator.serviceWorker.ready;
+        await reg.showNotification(title, opts);
+      } else {
+        // eslint-disable-next-line no-new
+        new Notification(title, opts);
+      }
+      return true;
+    } catch (err) {
+      console.error(err);
+      try {
+        // eslint-disable-next-line no-new
+        new Notification(title, opts);
+        return true;
+      } catch (err2) {
+        console.error(err2);
+        return false;
+      }
+    }
+  }
+
+  function alertStampGet(key) {
+    if (!state.alerts) state.alerts = defaultAlerts();
+    if (!state.alerts.stamps) state.alerts.stamps = {};
+    return state.alerts.stamps[key] || null;
+  }
+
+  function alertStampSet(key, value) {
+    if (!state.alerts) state.alerts = defaultAlerts();
+    if (!state.alerts.stamps) state.alerts.stamps = {};
+    state.alerts.stamps[key] = value;
+  }
+
+  async function checkTaskAlerts() {
+    if (!state.alerts || !state.alerts.tasksEnabled) return;
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    const today = todayKey();
+    let changed = false;
+    const icon =
+      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%233d4a6b'/%3E%3Cpath d='M18 34h28M18 24h28M18 44h18' stroke='%23c8d4f0' stroke-width='3' fill='none' stroke-linecap='round'/%3E%3C/svg%3E";
+
+    for (const list of Object.values(state.tasksByDate || {})) {
+      if (!Array.isArray(list)) continue;
+      for (const t of list) {
+        if (!t || t.status === "done" || t.done) continue;
+        const due = normalizeDueDate(t.dueDate);
+        if (!due) continue;
+        if (due === today) {
+          const key = `task-due:${t.id}`;
+          if (alertStampGet(key) === today) continue;
+          const ok = await showAppNotification("任務今日到期", {
+            body: t.text,
+            tag: key,
+            renotify: false,
+            icon,
+          });
+          if (ok) {
+            alertStampSet(key, today);
+            changed = true;
+          }
+        } else if (due < today) {
+          const key = `task-overdue:${t.id}`;
+          if (alertStampGet(key) === today) continue;
+          const ok = await showAppNotification("任務已逾期", {
+            body: `${t.text}（到期 ${due}）`,
+            tag: key,
+            renotify: false,
+            icon,
+          });
+          if (ok) {
+            alertStampSet(key, today);
+            changed = true;
+          }
+        }
+      }
+    }
+    if (changed) persist();
+  }
+
+  function eventStartMinutes(ev) {
+    if (!ev || !isTime(ev.start)) return null;
+    const [h, m] = ev.start.split(":").map(Number);
+    return h * 60 + m;
+  }
+
+  async function checkEventAlerts() {
+    if (!state.alerts || !state.alerts.eventsEnabled) return;
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    const parts = hkParts();
+    const today = parts.dateKey;
+    const nowMins = Number(parts.hour) * 60 + Number(parts.minute);
+    const lead = Number(state.alerts.eventLeadMinutes) || 0;
+    let changed = false;
+    const icon =
+      "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%236b4a3d'/%3E%3Cpath d='M20 22h24v28H20V22zm8-6h8v6h-8V16z' stroke='%23f0dcc8' stroke-width='3' fill='none' stroke-linejoin='round'/%3E%3C/svg%3E";
+
+    for (const ev of state.events || []) {
+      if (!ev || ev.date !== today) continue;
+      const startMins = eventStartMinutes(ev);
+      if (startMins == null) continue;
+
+      if (lead > 0) {
+        const leadAt = startMins - lead;
+        if (nowMins >= leadAt && nowMins < startMins) {
+          const key = `event-lead:${ev.id}:${today}`;
+          if (!alertStampGet(key)) {
+            const ok = await showAppNotification(`行程 ${lead} 分鐘後開始`, {
+              body: `${ev.title}（${ev.start}）`,
+              tag: key,
+              renotify: false,
+              icon,
+            });
+            if (ok) {
+              alertStampSet(key, today);
+              changed = true;
+            }
+          }
+        }
+      }
+
+      // At start: within a 2-minute window so the minute poll can catch it
+      if (nowMins >= startMins && nowMins < startMins + 2) {
+        const key = `event-start:${ev.id}:${today}`;
+        if (!alertStampGet(key)) {
+          const ok = await showAppNotification("行程開始", {
+            body: `${ev.title}（${ev.start}–${ev.end || ""}）`,
+            tag: key,
+            renotify: false,
+            icon,
+          });
+          if (ok) {
+            alertStampSet(key, today);
+            changed = true;
+          }
+        }
+      }
+    }
+    if (changed) persist();
+  }
+
+  async function runAlertChecks() {
+    await checkTaskAlerts();
+    await checkEventAlerts();
+  }
+
+  function clearAlertTimer() {
+    if (alertTimerId != null) {
+      clearInterval(alertTimerId);
+      alertTimerId = null;
+    }
+  }
+
+  function scheduleAlertTimer() {
+    clearAlertTimer();
+    const a = state.alerts || defaultAlerts();
+    if (!a.tasksEnabled && !a.eventsEnabled) return;
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    alertTimerId = setInterval(() => {
+      runAlertChecks();
+    }, 30 * 1000);
+    runAlertChecks();
+  }
+
+  async function ensureNotificationPermission() {
+    if (!("Notification" in window)) {
+      setAlertPermMsg("此瀏覽器不支援 Web Notifications。", "error");
+      return false;
+    }
+    let perm = Notification.permission;
+    if (perm === "default") {
+      perm = await Notification.requestPermission();
+    }
+    if (perm !== "granted") {
+      setAlertPermMsg(
+        "通知權限被拒絕。請在瀏覽器網址列或系統設定中允許通知後再啟用。關閉分頁後亦不會再提醒。",
+        "error"
+      );
+      return false;
+    }
+    await registerServiceWorker();
+    return true;
+  }
+
+  async function onAlertTasksToggle() {
+    if (!state.alerts) state.alerts = defaultAlerts();
+    if (els.alertTasksEnabled && els.alertTasksEnabled.checked) {
+      const ok = await ensureNotificationPermission();
+      if (!ok) {
+        state.alerts.tasksEnabled = false;
+        if (els.alertTasksEnabled) els.alertTasksEnabled.checked = false;
+        persist();
+        updateAlertsUI();
+        scheduleAlertTimer();
+        return;
+      }
+      state.alerts.tasksEnabled = true;
+      persist();
+      updateAlertsUI();
+      setAlertPermMsg(
+        "已啟用任務提醒。分頁需保持開啟；關閉分頁／瀏覽器後就不會再通知。",
+        "ok"
+      );
+      scheduleAlertTimer();
+    } else {
+      state.alerts.tasksEnabled = false;
+      persist();
+      updateAlertsUI();
+      scheduleAlertTimer();
+      if (!state.alerts.eventsEnabled) setAlertPermMsg("");
+    }
+  }
+
+  async function onAlertEventsToggle() {
+    if (!state.alerts) state.alerts = defaultAlerts();
+    if (els.alertEventsEnabled && els.alertEventsEnabled.checked) {
+      const ok = await ensureNotificationPermission();
+      if (!ok) {
+        state.alerts.eventsEnabled = false;
+        if (els.alertEventsEnabled) els.alertEventsEnabled.checked = false;
+        persist();
+        updateAlertsUI();
+        scheduleAlertTimer();
+        return;
+      }
+      state.alerts.eventsEnabled = true;
+      persist();
+      updateAlertsUI();
+      setAlertPermMsg(
+        "已啟用行程提醒。分頁需保持開啟；關閉分頁／瀏覽器後就不會再通知。",
+        "ok"
+      );
+      scheduleAlertTimer();
+    } else {
+      state.alerts.eventsEnabled = false;
+      persist();
+      updateAlertsUI();
+      scheduleAlertTimer();
+      if (!state.alerts.tasksEnabled) setAlertPermMsg("");
+    }
+  }
+
+  function onAlertEventLeadChange() {
+    if (!state.alerts) state.alerts = defaultAlerts();
+    const val = Number(els.alertEventLead && els.alertEventLead.value);
+    state.alerts.eventLeadMinutes = val === 0 || val === 15 ? val : 15;
+    persist();
+    updateAlertsUI();
+  }
+
   // —— Calendar ——
   function renderWeekStrip() {
     const today = todayKey();
@@ -1476,6 +1913,13 @@
       const actions = document.createElement("div");
       actions.className = "event-item__actions";
 
+      const toTask = document.createElement("button");
+      toTask.type = "button";
+      toTask.className = "btn btn--tiny btn--ghost";
+      toTask.textContent = "轉成任務";
+      toTask.title = "建立待辦任務，到期日為行程日期";
+      toTask.addEventListener("click", () => convertEventToTask(ev));
+
       const edit = document.createElement("button");
       edit.type = "button";
       edit.className = "btn btn--tiny btn--ghost";
@@ -1494,10 +1938,37 @@
         toast("已刪除行程");
       });
 
-      actions.append(edit, del);
+      actions.append(toTask, edit, del);
       li.append(time, body, actions);
       els.eventList.appendChild(li);
     });
+  }
+
+  function convertEventToTask(ev) {
+    if (!ev || typeof ev.title !== "string" || !ev.title.trim()) return;
+    const due = normalizeDueDate(ev.date) || selectedDate || todayKey();
+    const task = {
+      id: uid(),
+      text: ev.title.trim().slice(0, 200),
+      status: "todo",
+      done: false,
+      important: false,
+      urgent: false,
+      tags: [],
+      recurrence: { type: "none", weekdays: [] },
+      dueDate: due,
+      createdAt: new Date().toISOString(),
+      completedAt: null,
+      completedDateKey: null,
+    };
+    getTodayTasks().unshift(task);
+    persist();
+    renderTasks();
+    const jump = confirm(
+      `已建立待辦「${task.text}」（到期 ${due}）。\n要跳到「任務」分頁嗎？\n（取消則留在行程）`
+    );
+    if (jump) setActiveTab("tasks");
+    else toast("已轉成任務（留在行程）");
   }
 
   function openEventModal(ev) {
@@ -1906,6 +2377,7 @@
         scratch: typeof state.scratch === "string" ? state.scratch : "",
         notes: Array.isArray(state.notes) ? state.notes : [],
         waterReminder: normalizeWater(state.waterReminder),
+        alerts: normalizeAlerts(state.alerts),
       },
     };
   }
@@ -1929,10 +2401,6 @@
       console.error(err);
       toast("匯出失敗，請稍後再試");
     }
-  }
-
-  function isDateKey(s) {
-    return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
   }
 
   function isTime(s) {
@@ -2020,6 +2488,7 @@
     const scratch = typeof data.scratch === "string" ? data.scratch : "";
     // Ignore leftover habits from old exports
     const waterReminder = normalizeWater(data.waterReminder);
+    const alerts = normalizeAlerts(data.alerts);
 
     return {
       version: DATA_VERSION,
@@ -2029,13 +2498,14 @@
       scratch,
       notes,
       waterReminder,
+      alerts,
       _envelopeVersion: envelope && envelope.version != null ? envelope.version : null,
       _exportedAt: envelope && typeof envelope.exportedAt === "string" ? envelope.exportedAt : null,
     };
   }
 
   const IMPORT_REPLACE_CONFIRM =
-    "匯入會「取代」目前本機所有工作台資料（任務、行程、筆記、草稿、飲水提醒）。\n確定繼續？";
+    "匯入會「取代」目前本機所有工作台資料（任務、行程、筆記、草稿、飲水／任務／行程提醒設定）。\n確定繼續？";
 
   function confirmReplaceImport() {
     return confirm(IMPORT_REPLACE_CONFIRM);
@@ -2043,6 +2513,7 @@
 
   function applyImportedState(normalized) {
     clearWaterTimer();
+    clearAlertTimer();
     state = {
       version: DATA_VERSION,
       seeded: false,
@@ -2051,6 +2522,7 @@
       scratch: normalized.scratch,
       notes: normalized.notes,
       waterReminder: normalized.waterReminder,
+      alerts: normalizeAlerts(normalized.alerts),
     };
     persist();
     selectedDate = todayKey();
@@ -2067,6 +2539,8 @@
     } else {
       updateWaterUI();
     }
+    updateAlertsUI();
+    scheduleAlertTimer();
   }
 
   function toastImportSuccess(normalized) {
@@ -2235,6 +2709,7 @@
   function wipeSeedData() {
     if (!confirm("確定清除所有本機資料（含示範內容）並重新開始？")) return;
     clearWaterTimer();
+    clearAlertTimer();
     localStorage.removeItem(STORAGE_KEY);
     state = {
       version: DATA_VERSION,
@@ -2244,6 +2719,7 @@
       scratch: "",
       notes: [],
       waterReminder: defaultWater(),
+      alerts: defaultAlerts(),
     };
     persist();
     selectedDate = todayKey();
@@ -2257,6 +2733,8 @@
     renderAll();
     updateWaterUI();
     setWaterPermMsg("");
+    updateAlertsUI();
+    setAlertPermMsg("");
     toast("已清除所有資料");
   }
 
@@ -2268,6 +2746,7 @@
     renderEvents();
     renderNotes();
     updateWaterUI();
+    updateAlertsUI();
   }
 
   // —— Wiring ——
@@ -2344,6 +2823,15 @@
   els.waterEnabled.addEventListener("change", () => onWaterToggle());
   els.waterInterval.addEventListener("change", onWaterIntervalChange);
   els.btnWaterTest.addEventListener("click", onWaterTest);
+  if (els.alertTasksEnabled) {
+    els.alertTasksEnabled.addEventListener("change", () => onAlertTasksToggle());
+  }
+  if (els.alertEventsEnabled) {
+    els.alertEventsEnabled.addEventListener("change", () => onAlertEventsToggle());
+  }
+  if (els.alertEventLead) {
+    els.alertEventLead.addEventListener("change", onAlertEventLeadChange);
+  }
 
   els.noteForm.addEventListener("submit", (e) => {
     e.preventDefault();
@@ -2402,6 +2890,7 @@
         selectedDate = now;
       }
       renderAll();
+      runAlertChecks();
     }
   }, 60 * 1000);
 
@@ -2426,6 +2915,24 @@
       } else {
         updateWaterUI();
         setWaterPermMsg("請再次開啟「啟用提醒」以授予通知權限。", "error");
+      }
+    }
+    if (state.alerts && (state.alerts.tasksEnabled || state.alerts.eventsEnabled)) {
+      if ("Notification" in window && Notification.permission === "granted") {
+        scheduleAlertTimer();
+        setAlertPermMsg(
+          "任務／行程提醒已啟用。關閉分頁／瀏覽器後就不會再通知。",
+          "ok"
+        );
+      } else if ("Notification" in window && Notification.permission === "denied") {
+        state.alerts.tasksEnabled = false;
+        state.alerts.eventsEnabled = false;
+        persist();
+        updateAlertsUI();
+        setAlertPermMsg("通知權限被拒絕，已自動關閉任務／行程提醒。", "error");
+      } else {
+        updateAlertsUI();
+        setAlertPermMsg("請再次開啟任務或行程提醒以授予通知權限。", "error");
       }
     }
   });
