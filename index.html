@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="每日工作台 — 任務、日曆、習慣與筆記，全部儲存於本機。" />
+  <meta name="description" content="每日工作台 — 任務看板、行程、筆記與飲水提醒，全部儲存於本機。" />
   <title>每日工作台</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -38,12 +38,27 @@
       </div>
     </header>
 
-    <main class="grid">
-      <!-- 1. Today's tasks -->
-      <section class="panel panel--tasks" aria-labelledby="tasks-heading">
+    <nav class="mod-tabs" role="tablist" aria-label="功能模組">
+      <button type="button" class="mod-tabs__btn" role="tab" id="tab-tasks" data-tab="tasks" aria-controls="panel-tasks" aria-selected="true">
+        <span class="mod-tabs__key">1</span>任務
+      </button>
+      <button type="button" class="mod-tabs__btn" role="tab" id="tab-calendar" data-tab="calendar" aria-controls="panel-calendar" aria-selected="false">
+        <span class="mod-tabs__key">2</span>行程
+      </button>
+      <button type="button" class="mod-tabs__btn" role="tab" id="tab-notes" data-tab="notes" aria-controls="panel-notes" aria-selected="false">
+        <span class="mod-tabs__key">3</span>筆記
+      </button>
+      <button type="button" class="mod-tabs__btn" role="tab" id="tab-reminders" data-tab="reminders" aria-controls="panel-reminders" aria-selected="false">
+        <span class="mod-tabs__key">4</span>提醒
+      </button>
+    </nav>
+
+    <main class="modules">
+      <!-- 任務：艾森豪看板 -->
+      <section class="panel panel--module" id="panel-tasks" role="tabpanel" aria-labelledby="tab-tasks" data-module="tasks">
         <div class="panel__head">
           <div>
-            <h2 id="tasks-heading">今日任務</h2>
+            <h2 id="tasks-heading">任務看板</h2>
             <p class="panel__meta" id="tasks-remaining">尚餘 0 項</p>
           </div>
         </div>
@@ -60,14 +75,16 @@
           <button type="submit" class="btn btn--primary" aria-label="新增任務">新增</button>
         </form>
         <div class="composer-meta" id="task-composer-meta">
-          <label class="composer-meta__field">
-            <span class="composer-meta__label">優先</span>
-            <select id="task-priority" class="composer-meta__select" title="優先級">
-              <option value="high">高</option>
-              <option value="med" selected>中</option>
-              <option value="low">低</option>
-            </select>
-          </label>
+          <div class="flag-toggles" role="group" aria-label="重要與緊急">
+            <label class="flag-toggle">
+              <input type="checkbox" id="task-important" />
+              <span>重要</span>
+            </label>
+            <label class="flag-toggle">
+              <input type="checkbox" id="task-urgent" />
+              <span>緊急</span>
+            </label>
+          </div>
           <label class="composer-meta__field composer-meta__field--grow">
             <span class="composer-meta__label">標籤</span>
             <input
@@ -82,36 +99,63 @@
 
         <div class="task-filters" id="task-filters">
           <label class="task-filters__field">
-            <span class="task-filters__label">篩選優先</span>
-            <select id="filter-priority" class="composer-meta__select">
-              <option value="all">全部</option>
-              <option value="high">高</option>
-              <option value="med">中</option>
-              <option value="low">低</option>
-            </select>
-          </label>
-          <label class="task-filters__field">
             <span class="task-filters__label">篩選標籤</span>
             <select id="filter-tag" class="composer-meta__select">
               <option value="all">全部</option>
             </select>
           </label>
+          <label class="task-filters__field">
+            <span class="task-filters__label">矩陣篩選</span>
+            <select id="filter-eisen" class="composer-meta__select" title="按重要／緊急篩選">
+              <option value="all">全部</option>
+              <option value="iu">重要且緊急</option>
+              <option value="in">重要不緊急</option>
+              <option value="nu">不重要但緊急</option>
+              <option value="nn">不重要不緊急</option>
+            </select>
+          </label>
           <button type="button" class="btn btn--tiny btn--ghost" id="btn-clear-filters" hidden>清除篩選</button>
         </div>
 
-        <ul class="task-list" id="task-list" role="list"></ul>
+        <div class="kanban" id="kanban" aria-label="任務看板">
+          <div class="kanban__col" data-status="todo">
+            <header class="kanban__col-head">
+              <h3 class="kanban__col-title">待辦</h3>
+              <span class="kanban__col-count" data-count>0</span>
+            </header>
+            <ul class="kanban__list" data-list role="list"></ul>
+          </div>
+          <div class="kanban__col" data-status="doing">
+            <header class="kanban__col-head">
+              <h3 class="kanban__col-title">進行中</h3>
+              <span class="kanban__col-meta">
+                <span class="kanban__wip" id="wip-hint" title="建議同時進行不多於 3 項">WIP ≤ 3</span>
+                <span class="kanban__col-count" data-count>0</span>
+              </span>
+            </header>
+            <ul class="kanban__list" data-list role="list"></ul>
+          </div>
+          <div class="kanban__col" data-status="done">
+            <header class="kanban__col-head">
+              <h3 class="kanban__col-title">完成</h3>
+              <span class="kanban__col-count" data-count>0</span>
+            </header>
+            <ul class="kanban__list" data-list role="list"></ul>
+          </div>
+        </div>
+
         <div class="empty" id="tasks-empty" hidden>
           <p class="empty__title">今日尚無任務</p>
-          <p class="empty__desc">輸入上方欄位，按 Enter 即可開始。亦可「帶入昨日未完成」。</p>
+          <p class="empty__desc">輸入上方欄位，勾選「重要／緊急」後按 Enter。亦可「帶入昨日未完成」。</p>
         </div>
         <div class="empty" id="tasks-filtered-empty" hidden>
           <p class="empty__title">沒有符合篩選的任務</p>
-          <p class="empty__desc">試試調整優先級或標籤篩選。</p>
+          <p class="empty__desc">試試調整標籤或重要／緊急篩選。</p>
         </div>
       </section>
 
-      <!-- 2. Calendar -->
-      <section class="panel panel--calendar" aria-labelledby="cal-heading">
+      <!-- 行程 -->
+      <section class="panel panel--module" id="panel-calendar" role="tabpanel" aria-labelledby="tab-calendar" data-module="calendar" hidden>
         <div class="panel__head">
           <div>
             <h2 id="cal-heading">本週行程</h2>
@@ -131,8 +175,8 @@
         </div>
       </section>
 
-      <!-- 3. Quick notes -->
-      <section class="panel panel--notes" aria-labelledby="notes-heading">
+      <!-- 筆記 -->
+      <section class="panel panel--module" id="panel-notes" role="tabpanel" aria-labelledby="tab-notes" data-module="notes" hidden>
         <div class="panel__head">
           <div>
             <h2 id="notes-heading">快速筆記</h2>
@@ -146,7 +190,7 @@
             id="scratch-pad"
             class="scratch__pad"
             placeholder="隨便寫下想法、連結或待查事項…"
-            rows="5"
+            rows="8"
           ></textarea>
           <div class="scratch__bar">
             <span class="scratch__hint" id="scratch-hint">自動儲存</span>
@@ -173,34 +217,16 @@
         </div>
       </section>
 
-      <!-- 4. Habits + water -->
-      <section class="panel panel--habits" aria-labelledby="habits-heading">
+      <!-- 提醒（飲水） -->
+      <section class="panel panel--module" id="panel-reminders" role="tabpanel" aria-labelledby="tab-reminders" data-module="reminders" hidden>
         <div class="panel__head">
           <div>
-            <h2 id="habits-heading">習慣打卡</h2>
-            <p class="panel__meta">本週進度（星期一至日）</p>
+            <h2 id="reminders-heading">提醒</h2>
+            <p class="panel__meta">本機通知 · 關閉分頁後不會再提醒</p>
           </div>
         </div>
 
-        <form class="composer composer--habit" id="habit-form" autocomplete="off">
-          <label class="sr-only" for="habit-input">新增習慣</label>
-          <input
-            type="text"
-            id="habit-input"
-            class="composer__input"
-            placeholder="新增習慣…（例如：散步）"
-            maxlength="40"
-          />
-          <button type="submit" class="btn btn--primary btn--sm" aria-label="新增習慣">新增</button>
-        </form>
-
-        <ul class="habit-list" id="habit-list" role="list"></ul>
-        <div class="empty" id="habits-empty" hidden>
-          <p class="empty__title">尚未設定習慣</p>
-          <p class="empty__desc">新增一項習慣，每日打卡並查看本週圓點。</p>
-        </div>
-
-        <div class="water-block" id="water-block">
+        <div class="water-block water-block--solo" id="water-block">
           <div class="water-block__head">
             <h3 class="water-block__title">飲水提醒</h3>
             <p class="water-block__hint" id="water-status">關閉中</p>
@@ -222,12 +248,15 @@
             <button type="button" class="btn btn--tiny btn--ghost" id="btn-water-test" title="立即測試一則通知">測試</button>
           </div>
           <p class="water-block__note" id="water-perm-msg" hidden></p>
+          <p class="water-block__aside">
+            使用瀏覽器通知（Windows 的 Chrome／Edge 會顯示於系統通知中心）。無推播伺服器：分頁開啟或縮到工作列時依間隔提醒；關閉分頁或瀏覽器後即停止。
+          </p>
         </div>
       </section>
     </main>
 
     <footer class="footer">
-      <p>資料僅存於本機瀏覽器（localStorage）· 時區 Asia/Hong_Kong</p>
+      <p>資料僅存於本機瀏覽器（localStorage）· 時區 Asia/Hong_Kong · 快捷鍵 1–4 切換模組</p>
     </footer>
   </div>
 
@@ -270,7 +299,6 @@
     </form>
   </dialog>
 
-  <!-- Toast -->
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="./app.js" defer></script>

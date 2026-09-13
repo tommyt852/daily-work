@@ -1,4 +1,4 @@
-/* Daily Workbench — calm desktop-first UI (zh-HK) */
+/* Daily Workbench — calm desktop-first UI (zh-HK) · Kanban + tabs */
 :root {
   --bg: #f4f1eb;
   --bg-elevated: #faf8f4;
@@ -17,12 +17,14 @@
   --danger: #9b3b3b;
   --danger-soft: #f8ecec;
   --done: #6b7c72;
-  --prio-high: #b54a3a;
-  --prio-high-bg: #f8ebe8;
-  --prio-med: #5a8a72;
-  --prio-med-bg: #e8f0eb;
-  --prio-low: #8a8478;
-  --prio-low-bg: #f0eee9;
+  --flag-important: #b54a3a;
+  --flag-important-bg: #f8ebe8;
+  --flag-urgent: #8b5a2b;
+  --flag-urgent-bg: #f5eee6;
+  --quad-iu: #b54a3a;
+  --quad-in: #2d4a3e;
+  --quad-nu: #8b5a2b;
+  --quad-nn: #8a8478;
   --shadow: 0 1px 2px rgba(28, 36, 32, 0.04), 0 8px 24px rgba(28, 36, 32, 0.06);
   --shadow-modal: 0 16px 48px rgba(28, 36, 32, 0.16);
   --radius: 14px;
@@ -69,7 +71,7 @@ body {
 }
 
 .app {
-  max-width: 1180px;
+  max-width: 1280px;
   margin: 0 auto;
   padding: 1.75rem 1.5rem 3rem;
 }
@@ -80,7 +82,7 @@ body {
   align-items: flex-start;
   justify-content: space-between;
   gap: 1rem;
-  margin-bottom: 1.75rem;
+  margin-bottom: 1.25rem;
   flex-wrap: wrap;
 }
 
@@ -130,6 +132,73 @@ body {
   flex-wrap: wrap;
   gap: 0.5rem;
   align-items: center;
+}
+
+/* —— Module tabs —— */
+.mod-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 1.15rem;
+  padding: 0.3rem;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow: 0 1px 2px rgba(28, 36, 32, 0.03);
+  width: fit-content;
+  max-width: 100%;
+}
+
+.mod-tabs__btn {
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  padding: 0.5rem 1.05rem;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  transition: background 0.15s, color 0.15s;
+}
+
+.mod-tabs__btn:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.mod-tabs__btn[aria-selected="true"] {
+  background: var(--accent);
+  color: #f5faf7;
+}
+
+.mod-tabs__btn:focus-visible {
+  outline: 2px solid var(--accent-mid);
+  outline-offset: 2px;
+}
+
+.mod-tabs__key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 0.2rem;
+  font-size: 0.65rem;
+  font-weight: 600;
+  font-family: var(--mono);
+  border-radius: 4px;
+  background: rgba(28, 36, 32, 0.08);
+  color: inherit;
+  opacity: 0.7;
+}
+
+.mod-tabs__btn[aria-selected="true"] .mod-tabs__key {
+  background: rgba(255, 255, 255, 0.18);
+  opacity: 0.9;
 }
 
 /* —— Buttons —— */
@@ -216,46 +285,17 @@ body {
   border-radius: 6px;
 }
 
-/* —— Grid —— */
-.grid {
-  display: grid;
-  grid-template-columns: 1.05fr 1fr;
-  grid-template-rows: auto auto auto;
-  gap: 1.15rem;
-  align-items: start;
+/* —— Modules —— */
+.modules {
+  display: block;
 }
 
-.panel--tasks {
-  grid-column: 1;
-  grid-row: 1 / span 3;
+.panel--module {
+  min-height: 18rem;
 }
 
-.panel--calendar {
-  grid-column: 2;
-  grid-row: 1;
-}
-
-.panel--notes {
-  grid-column: 2;
-  grid-row: 2;
-}
-
-.panel--habits {
-  grid-column: 2;
-  grid-row: 3;
-}
-
-@media (max-width: 900px) {
-  .grid {
-    grid-template-columns: 1fr;
-  }
-  .panel--tasks,
-  .panel--calendar,
-  .panel--notes,
-  .panel--habits {
-    grid-column: 1;
-    grid-row: auto;
-  }
+.panel--module[hidden] {
+  display: none;
 }
 
 /* —— Panels —— */
@@ -265,7 +305,6 @@ body {
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   padding: 1.15rem 1.2rem 1.25rem;
-  min-height: 12rem;
 }
 
 .panel__head {
@@ -325,10 +364,6 @@ body {
   margin-bottom: 0.75rem;
 }
 
-.composer--habit {
-  margin-bottom: 0.75rem;
-}
-
 .composer-meta {
   display: flex;
   flex-wrap: wrap;
@@ -384,6 +419,57 @@ body {
   width: 100%;
 }
 
+/* Flag toggles (重要 / 緊急) */
+.flag-toggles {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.flag-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  padding: 0.28rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: #fff;
+  cursor: pointer;
+  user-select: none;
+  color: var(--ink-soft);
+  transition: border-color 0.12s, background 0.12s, color 0.12s;
+}
+
+.flag-toggle input {
+  width: 0.95rem;
+  height: 0.95rem;
+  accent-color: var(--accent);
+  cursor: pointer;
+  margin: 0;
+}
+
+.flag-toggle:has(input:checked) {
+  border-color: var(--accent-mid);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.flag-toggle:has(#task-important:checked),
+.flag-toggle:has(input[data-flag="important"]:checked) {
+  border-color: var(--flag-important);
+  background: var(--flag-important-bg);
+  color: var(--flag-important);
+}
+
+.flag-toggle:has(#task-urgent:checked),
+.flag-toggle:has(input[data-flag="urgent"]:checked) {
+  border-color: var(--flag-urgent);
+  background: var(--flag-urgent-bg);
+  color: var(--flag-urgent);
+}
+
 .task-filters {
   display: flex;
   flex-wrap: wrap;
@@ -404,174 +490,264 @@ body {
   white-space: nowrap;
 }
 
-/* —— Tasks —— */
-.task-list {
+/* —— Kanban —— */
+.kanban {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  align-items: stretch;
+  min-height: 16rem;
+}
+
+@media (max-width: 900px) {
+  .kanban {
+    grid-template-columns: 1fr;
+  }
+  .mod-tabs {
+    border-radius: var(--radius-sm);
+  }
+  .mod-tabs__key {
+    display: none;
+  }
+}
+
+.kanban__col {
+  display: flex;
+  flex-direction: column;
+  min-height: 14rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.kanban__col.drag-over {
+  border-color: var(--accent-mid);
+  box-shadow: inset 0 0 0 2px rgba(90, 138, 114, 0.2);
+}
+
+.kanban__col[data-status="todo"] .kanban__col-head {
+  border-top: 3px solid var(--quad-nn);
+}
+
+.kanban__col[data-status="doing"] .kanban__col-head {
+  border-top: 3px solid var(--accent-mid);
+}
+
+.kanban__col[data-status="done"] .kanban__col-head {
+  border-top: 3px solid var(--accent);
+}
+
+.kanban__col-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.kanban__wip {
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-faint);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+}
+
+.kanban__wip--soft {
+  color: var(--warn);
+  border-color: #e0c9a8;
+  background: #faf3e8;
+}
+
+.kanban__col-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  padding: 0.55rem 0.65rem 0.45rem;
+  background: rgba(255, 255, 255, 0.65);
+  border-bottom: 1px solid var(--line);
+}
+
+.kanban__col-title {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+}
+
+.kanban__col-count {
+  font-size: 0.7rem;
+  font-weight: 600;
+  font-family: var(--mono);
+  color: var(--ink-faint);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  min-width: 1.4rem;
+  text-align: center;
+  padding: 0.05rem 0.35rem;
+}
+
+.kanban__list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0.45rem;
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+  flex: 1;
+  min-height: 4rem;
+  overflow-y: auto;
+  max-height: 420px;
 }
 
-.task-item {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: start;
-  gap: 0.55rem;
-  padding: 0.55rem 0.65rem;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-  border-left: 3px solid var(--prio-med);
+/* —— Task cards —— */
+.task-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.55rem 0.6rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fff;
+  cursor: grab;
+  transition: box-shadow 0.12s, border-color 0.12s, opacity 0.12s;
+}
+
+.task-card:hover {
+  border-color: var(--line-strong);
+  box-shadow: 0 2px 8px rgba(28, 36, 32, 0.06);
+}
+
+.task-card.dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+
+.kanban__col[data-status="done"] .task-card {
+  opacity: 0.88;
   background: var(--bg-elevated);
-  transition: background 0.12s, border-color 0.12s;
 }
 
-.task-item--prio-high {
-  border-left-color: var(--prio-high);
-}
-
-.task-item--prio-med {
-  border-left-color: var(--prio-med);
-}
-
-.task-item--prio-low {
-  border-left-color: var(--prio-low);
-}
-
-.task-item:hover {
-  border-color: var(--line);
-  border-left-width: 3px;
-}
-
-.task-item--done {
-  background: transparent;
-  opacity: 0.85;
-}
-
-.task-item--done .task-item__text {
+.kanban__col[data-status="done"] .task-card__text {
   text-decoration: line-through;
   color: var(--done);
 }
 
-.task-item__check {
-  width: 1.15rem;
-  height: 1.15rem;
+.task-card--priority-boost {
+  box-shadow: 0 0 0 1px rgba(181, 74, 58, 0.22);
+  border-color: #e8c4bc;
+}
+
+
+.task-card__top {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+}
+
+.task-card__check {
+  width: 1.05rem;
+  height: 1.05rem;
   accent-color: var(--accent);
   cursor: pointer;
-  margin-top: 0.15rem;
+  margin-top: 0.12rem;
+  flex-shrink: 0;
 }
 
-.task-item__main {
+.task-card__text {
+  flex: 1;
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.3rem;
-}
-
-.task-item__text {
-  font-size: 0.9rem;
+  font-size: 0.84rem;
   word-break: break-word;
+  line-height: 1.4;
 }
 
-.task-item__meta {
+.task-card__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.eisen-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 0.08rem 0.38rem;
+  border-radius: 999px;
+  line-height: 1.3;
+}
+
+.eisen-badge--important {
+  background: var(--flag-important-bg);
+  color: var(--flag-important);
+}
+
+.eisen-badge--urgent {
+  background: var(--flag-urgent-bg);
+  color: var(--flag-urgent);
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.65rem;
+  padding: 0.08rem 0.35rem;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+  line-height: 1.3;
+}
+
+.task-card__flags {
   display: flex;
   flex-wrap: wrap;
   gap: 0.3rem;
   align-items: center;
 }
 
-.prio-badge {
-  display: inline-flex;
-  align-items: center;
-  font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  padding: 0.1rem 0.4rem;
-  border-radius: 999px;
-  line-height: 1.3;
+.task-card__flags .flag-toggle {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.45rem;
 }
 
-.prio-badge--high {
-  background: var(--prio-high-bg);
-  color: var(--prio-high);
-}
-
-.prio-badge--med {
-  background: var(--prio-med-bg);
-  color: var(--accent);
-}
-
-.prio-badge--low {
-  background: var(--prio-low-bg);
-  color: var(--prio-low);
-}
-
-.tag-chip {
-  display: inline-flex;
-  align-items: center;
-  font-size: 0.68rem;
-  padding: 0.1rem 0.4rem;
-  border-radius: 999px;
-  background: #fff;
-  border: 1px solid var(--line);
-  color: var(--ink-soft);
-  line-height: 1.3;
-}
-
-.task-item__prio-select,
-.task-item__tags-input {
+.task-card__tags-input {
   font-family: inherit;
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   padding: 0.15rem 0.35rem;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #fff;
+  background: var(--bg-elevated);
   color: var(--ink-soft);
-  max-width: 7.5rem;
+  width: 100%;
+  max-width: 100%;
 }
 
-.task-item__tags-input {
-  max-width: 9rem;
-  min-width: 5rem;
+.task-card__tags-input:focus {
+  outline: none;
+  border-color: var(--accent-mid);
+  background: #fff;
 }
 
-.task-item__actions {
+.task-card__actions {
   display: flex;
   gap: 0.2rem;
-  opacity: 0.55;
-  transition: opacity 0.12s;
-  padding-top: 0.1rem;
-}
-
-.task-item:hover .task-item__actions,
-.task-item:focus-within .task-item__actions {
-  opacity: 1;
-}
-
-.task-item__handle {
-  cursor: grab;
-  color: var(--ink-faint);
-  font-size: 0.85rem;
-  padding: 0.15rem 0.25rem;
-  user-select: none;
-  border: none;
-  background: transparent;
-  font-family: inherit;
-  margin-top: 0.1rem;
-}
-
-.task-item__handle:active {
-  cursor: grabbing;
-}
-
-.task-item.dragging {
   opacity: 0.5;
-  border-color: var(--accent-mid);
+  transition: opacity 0.12s;
 }
 
-.task-item.drag-over {
-  border-top: 2px solid var(--accent);
+.task-card:hover .task-card__actions,
+.task-card:focus-within .task-card__actions {
+  opacity: 1;
 }
 
 /* —— Week strip —— */
@@ -654,7 +830,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
-  max-height: 280px;
+  max-height: 420px;
   overflow-y: auto;
 }
 
@@ -676,6 +852,7 @@ body {
   color: var(--accent);
   line-height: 1.35;
   padding-top: 0.1rem;
+  white-space: pre-line;
 }
 
 .event-item__title {
@@ -711,7 +888,7 @@ body {
   width: 100%;
   border: none;
   resize: vertical;
-  min-height: 6.5rem;
+  min-height: 10rem;
   padding: 0.75rem 0.9rem;
   font-family: inherit;
   font-size: 0.875rem;
@@ -749,7 +926,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
-  max-height: 220px;
+  max-height: 320px;
   overflow-y: auto;
 }
 
@@ -776,100 +953,13 @@ body {
   color: var(--ink-faint);
 }
 
-/* —— Habits —— */
-.habit-list {
-  list-style: none;
-  margin: 0 0 1rem;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
-}
-
-.habit-item {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: 0.65rem;
-  align-items: center;
-  padding: 0.55rem 0.65rem;
+/* —— Water reminder —— */
+.water-block--solo {
+  margin-top: 0;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--bg-elevated);
-  border: 1px solid transparent;
-}
-
-.habit-item:hover {
-  border-color: var(--line);
-}
-
-.habit-item__check {
-  width: 1.15rem;
-  height: 1.15rem;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-
-.habit-item__name {
-  margin: 0;
-  font-size: 0.875rem;
-  font-weight: 500;
-  word-break: break-word;
-}
-
-.habit-item__week {
-  display: flex;
-  gap: 0.25rem;
-  align-items: center;
-  margin-top: 0.3rem;
-}
-
-.habit-dot {
-  width: 0.55rem;
-  height: 0.55rem;
-  border-radius: 50%;
-  background: var(--line-strong);
-  flex-shrink: 0;
-}
-
-.habit-dot--done {
-  background: var(--accent-mid);
-}
-
-.habit-dot--today {
-  box-shadow: 0 0 0 2px rgba(90, 138, 114, 0.35);
-}
-
-.habit-dot__label {
-  font-size: 0.6rem;
-  color: var(--ink-faint);
-  width: 0.55rem;
-  text-align: center;
-  line-height: 1;
-}
-
-.habit-week-labels {
-  display: flex;
-  gap: 0.25rem;
-  margin-bottom: 0.15rem;
-}
-
-.habit-item__body {
-  min-width: 0;
-}
-
-.habit-item__del {
-  opacity: 0.5;
-}
-
-.habit-item:hover .habit-item__del,
-.habit-item:focus-within .habit-item__del {
-  opacity: 1;
-}
-
-/* —— Water reminder —— */
-.water-block {
-  margin-top: 0.25rem;
-  padding-top: 0.9rem;
-  border-top: 1px solid var(--line);
 }
 
 .water-block__head {
@@ -877,25 +967,25 @@ body {
   align-items: baseline;
   justify-content: space-between;
   gap: 0.5rem;
-  margin-bottom: 0.55rem;
+  margin-bottom: 0.75rem;
 }
 
 .water-block__title {
   margin: 0;
-  font-size: 0.9rem;
+  font-size: 1rem;
   font-weight: 600;
 }
 
 .water-block__hint {
   margin: 0;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   color: var(--ink-faint);
 }
 
 .water-block__controls {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.65rem;
+  gap: 0.75rem;
   align-items: center;
 }
 
@@ -903,7 +993,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.85rem;
+  font-size: 0.9rem;
   cursor: pointer;
   user-select: none;
 }
@@ -916,10 +1006,10 @@ body {
 }
 
 .water-block__note {
-  margin: 0.55rem 0 0;
-  font-size: 0.775rem;
+  margin: 0.75rem 0 0;
+  font-size: 0.8rem;
   color: var(--warn);
-  line-height: 1.4;
+  line-height: 1.45;
 }
 
 .water-block__note--error {
@@ -930,6 +1020,14 @@ body {
   color: var(--accent-mid);
 }
 
+.water-block__aside {
+  margin: 0.85rem 0 0;
+  font-size: 0.78rem;
+  color: var(--ink-faint);
+  line-height: 1.5;
+  max-width: 40rem;
+}
+
 /* —— Empty states —— */
 .empty {
   text-align: center;
@@ -937,6 +1035,7 @@ body {
   border: 1px dashed var(--line-strong);
   border-radius: var(--radius-sm);
   background: linear-gradient(180deg, rgba(244, 241, 235, 0.6), transparent);
+  margin-top: 0.75rem;
 }
 
 .empty__title {

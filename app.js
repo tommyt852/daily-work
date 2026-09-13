@@ -1,11 +1,7 @@
 /**
  * 每日工作台 — vanilla JS, localStorage
  * Timezone: Asia/Hong_Kong
- *
- * Future adapter hints (not implemented):
- *   - adapters/googleCalendar.js
- *   - adapters/notionNotes.js
- *   - adapters/githubIssues.js
+ * Kanban: 待辦 / 進行中 / 完成 · flags: 重要 / 緊急
  */
 
 (function () {
@@ -13,13 +9,17 @@
 
   const TZ = "Asia/Hong_Kong";
   const STORAGE_KEY = "daily-workbench:v1";
-  const EXPORT_VERSION = 2;
-  const DATA_VERSION = 2;
+  const TAB_KEY = "daily-workbench:active-tab";
+  const EXPORT_VERSION = 3;
+  const DATA_VERSION = 3;
   const DOW_ZH = ["日", "一", "二", "三", "四", "五", "六"];
-  const DOW_MON_FIRST = ["一", "二", "三", "四", "五", "六", "日"];
-  const PRIO_LABEL = { high: "高", med: "中", low: "低" };
   const WATER_INTERVALS = [30, 45, 60, 90];
-  const WATER_MIN_GAP_MS = 25 * 1000; // anti-spam floor between toasts
+  const WATER_MIN_GAP_MS = 25 * 1000;
+  const STATUSES = ["todo", "doing", "done"];
+  const STATUS_LABEL = { todo: "待辦", doing: "進行中", done: "完成" };
+  const WIP_SOFT_LIMIT = 3;
+  const DONE_VISIBLE_DAYS = 3; // hide when age >= 3 HK calendar days
+  const TABS = ["tasks", "calendar", "notes", "reminders"];
 
   // —— Date helpers (Asia/Hong_Kong) ——
   function hkParts(date = new Date()) {
@@ -52,9 +52,8 @@
 
   function yesterdayKey() {
     const now = new Date();
-    const probe = new Date(now.getTime() - 36 * 60 * 60 * 1000);
-    let key = hkParts(probe).dateKey;
     const today = todayKey();
+    let key = today;
     for (let i = 1; i <= 48; i++) {
       const d = new Date(now.getTime() - i * 60 * 60 * 1000);
       const k = hkParts(d).dateKey;
@@ -75,6 +74,16 @@
     const [y, m, d] = key.split("-").map(Number);
     const dt = new Date(Date.UTC(y, m - 1, d + delta, 4, 0, 0));
     return hkParts(dt).dateKey;
+  }
+
+  /** Calendar-day difference laterKey - earlierKey (HK date keys). */
+  function calendarDaysBetween(earlierKey, laterKey) {
+    if (!earlierKey || !laterKey) return 0;
+    const [y1, m1, d1] = earlierKey.split("-").map(Number);
+    const [y2, m2, d2] = laterKey.split("-").map(Number);
+    const t1 = Date.UTC(y1, m1 - 1, d1);
+    const t2 = Date.UTC(y2, m2 - 1, d2);
+    return Math.round((t2 - t1) / 86400000);
   }
 
   function weekdayIndex(key) {
@@ -119,11 +128,6 @@
     return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   }
 
-  function normalizePriority(p) {
-    if (p === "high" || p === "low" || p === "med") return p;
-    return "med";
-  }
-
   function parseTags(raw) {
     if (Array.isArray(raw)) {
       return raw
@@ -141,18 +145,91 @@
       .map((t) => t.slice(0, 16));
   }
 
+  function normalizeStatus(s, doneFlag) {
+    if (s === "todo" || s === "doing" || s === "done") return s;
+    if (doneFlag) return "done";
+    return "todo";
+  }
+
+  /** Map legacy priority → important/urgent. */
+  function flagsFromLegacy(t) {
+    let important = false;
+    let urgent = false;
+    if (typeof t.important === "boolean" || typeof t.urgent === "boolean") {
+      important = !!t.important;
+      urgent = !!t.urgent;
+    } else if (t.priority === "high") {
+      important = true;
+      urgent = true;
+    } else if (t.priority === "med") {
+      important = true;
+      urgent = false;
+    } else if (t.priority === "low") {
+      important = false;
+      urgent = false;
+    }
+    return { important, urgent };
+  }
+
   function normalizeTask(t) {
     if (!t || typeof t !== "object") return null;
     if (typeof t.text !== "string" || !t.text.trim()) return null;
+    const flags = flagsFromLegacy(t);
+    const status = normalizeStatus(t.status, t.done);
+    const done = status === "done";
+    let completedAt = null;
+    let completedDateKey = null;
+    if (done) {
+      if (typeof t.completedAt === "string" && t.completedAt) {
+        completedAt = t.completedAt;
+      } else {
+        completedAt = typeof t.createdAt === "string" ? t.createdAt : new Date().toISOString();
+      }
+      if (typeof t.completedDateKey === "string" && /^\d{4}-\d{2}-\d{2}$/.test(t.completedDateKey)) {
+        completedDateKey = t.completedDateKey;
+      } else {
+        try {
+          completedDateKey = hkParts(new Date(completedAt)).dateKey;
+        } catch {
+          completedDateKey = todayKey();
+        }
+      }
+    }
     return {
       id: typeof t.id === "string" && t.id ? t.id : uid(),
       text: t.text.trim().slice(0, 200),
-      done: !!t.done,
-      createdAt: typeof t.createdAt === "string" ? t.createdAt : new Date().toISOString(),
-      priority: normalizePriority(t.priority),
+      status,
+      done,
+      important: flags.important,
+      urgent: flags.urgent,
       tags: parseTags(t.tags),
+      createdAt: typeof t.createdAt === "string" ? t.createdAt : new Date().toISOString(),
+      completedAt,
+      completedDateKey,
       ...(t.pulledFrom ? { pulledFrom: t.pulledFrom } : {}),
     };
+  }
+
+  function isDoneVisibleOnBoard(task, today = todayKey()) {
+    if (task.status !== "done") return true;
+    const key = task.completedDateKey || today;
+    const age = calendarDaysBetween(key, today);
+    return age >= 0 && age < DONE_VISIBLE_DAYS;
+  }
+
+  function eisenBucket(task) {
+    if (task.important && task.urgent) return "iu";
+    if (task.important && !task.urgent) return "in";
+    if (!task.important && task.urgent) return "nu";
+    return "nn";
+  }
+
+  function sortTasksInColumn(a, b) {
+    // 重要且緊急 float to top
+    const score = (t) => (t.important && t.urgent ? 2 : t.important ? 1 : 0);
+    const d = score(b) - score(a);
+    if (d !== 0) return d;
+    return (a.createdAt || "").localeCompare(b.createdAt || "");
   }
 
   function defaultWater() {
@@ -177,22 +254,6 @@
     };
   }
 
-  function normalizeHabit(h) {
-    if (!h || typeof h !== "object") return null;
-    if (typeof h.name !== "string" || !h.name.trim()) return null;
-    const checkins = {};
-    if (h.checkins && typeof h.checkins === "object" && !Array.isArray(h.checkins)) {
-      for (const [k, v] of Object.entries(h.checkins)) {
-        if (/^\d{4}-\d{2}-\d{2}$/.test(k) && v) checkins[k] = true;
-      }
-    }
-    return {
-      id: typeof h.id === "string" && h.id ? h.id : uid(),
-      name: h.name.trim().slice(0, 40),
-      checkins,
-    };
-  }
-
   function ensureStateShape(data) {
     data.tasksByDate = data.tasksByDate || {};
     for (const [dk, list] of Object.entries(data.tasksByDate)) {
@@ -205,15 +266,13 @@
     data.events = Array.isArray(data.events) ? data.events : [];
     data.notes = Array.isArray(data.notes) ? data.notes : [];
     data.scratch = typeof data.scratch === "string" ? data.scratch : "";
-    data.habits = Array.isArray(data.habits)
-      ? data.habits.map(normalizeHabit).filter(Boolean)
-      : [];
+    // habits dropped — ignore leftover
+    delete data.habits;
     data.waterReminder = normalizeWater(data.waterReminder);
     data.version = typeof data.version === "number" ? data.version : DATA_VERSION;
     return data;
   }
 
-  // —— Seed data ——
   function buildSeed() {
     const today = todayKey();
     const yest = yesterdayKey();
@@ -226,44 +285,64 @@
           {
             id: uid(),
             text: "檢視本週優先事項",
+            status: "todo",
             done: false,
-            createdAt: new Date().toISOString(),
-            priority: "high",
+            important: true,
+            urgent: true,
             tags: ["工作"],
+            createdAt: new Date().toISOString(),
+            completedAt: null,
+            completedDateKey: null,
           },
           {
             id: uid(),
             text: "回覆待辦電郵",
+            status: "doing",
             done: false,
-            createdAt: new Date().toISOString(),
-            priority: "med",
+            important: true,
+            urgent: false,
             tags: ["工作"],
+            createdAt: new Date().toISOString(),
+            completedAt: null,
+            completedDateKey: null,
           },
           {
             id: uid(),
             text: "整理桌面與檔案",
+            status: "done",
             done: true,
-            createdAt: new Date().toISOString(),
-            priority: "low",
+            important: false,
+            urgent: false,
             tags: ["私人"],
+            createdAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            completedDateKey: today,
           },
         ],
         [yest]: [
           {
             id: uid(),
             text: "完成每週報告草稿",
+            status: "todo",
             done: false,
-            createdAt: new Date().toISOString(),
-            priority: "high",
+            important: true,
+            urgent: true,
             tags: ["工作"],
+            createdAt: new Date().toISOString(),
+            completedAt: null,
+            completedDateKey: null,
           },
           {
             id: uid(),
             text: "更新專案進度表",
+            status: "todo",
             done: false,
-            createdAt: new Date().toISOString(),
-            priority: "med",
+            important: true,
+            urgent: false,
             tags: ["工作"],
+            createdAt: new Date().toISOString(),
+            completedAt: null,
+            completedDateKey: null,
           },
         ],
       },
@@ -301,15 +380,10 @@
           createdAt: new Date().toISOString(),
         },
       ],
-      habits: [
-        { id: uid(), name: "伸展", checkins: {} },
-        { id: uid(), name: "閱讀 15 分鐘", checkins: {} },
-      ],
       waterReminder: defaultWater(),
     };
   }
 
-  // —— Persistence ——
   function loadState() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
@@ -329,35 +403,57 @@
   }
 
   function saveState(state) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    // Never persist habits
+    const copy = { ...state };
+    delete copy.habits;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(copy));
   }
 
-  // —— App state ——
   let state = loadState();
   let selectedDate = todayKey();
   let dragTaskId = null;
   let toastTimer = null;
-  let filterPriority = "all";
   let filterTag = "all";
+  let filterEisen = "all";
   let waterTimerId = null;
   let swRegistration = null;
+  let activeTab = loadActiveTab();
 
-  // —— DOM ——
+  function loadActiveTab() {
+    try {
+      const t = localStorage.getItem(TAB_KEY);
+      if (TABS.includes(t)) return t;
+    } catch {
+      /* ignore */
+    }
+    return "tasks";
+  }
+
+  function persistActiveTab(tab) {
+    try {
+      localStorage.setItem(TAB_KEY, tab);
+    } catch {
+      /* ignore */
+    }
+  }
+
   const $ = (sel) => document.querySelector(sel);
 
   const els = {
     headerDate: $("#header-date"),
     taskForm: $("#task-form"),
     taskInput: $("#task-input"),
-    taskPriority: $("#task-priority"),
+    taskImportant: $("#task-important"),
+    taskUrgent: $("#task-urgent"),
     taskTags: $("#task-tags"),
-    filterPriority: $("#filter-priority"),
     filterTag: $("#filter-tag"),
+    filterEisen: $("#filter-eisen"),
     btnClearFilters: $("#btn-clear-filters"),
-    taskList: $("#task-list"),
+    kanban: $("#kanban"),
     tasksEmpty: $("#tasks-empty"),
     tasksFilteredEmpty: $("#tasks-filtered-empty"),
     tasksRemaining: $("#tasks-remaining"),
+    wipHint: $("#wip-hint"),
     btnPullForward: $("#btn-pull-forward"),
     btnWipeSeed: $("#btn-wipe-seed"),
     btnExport: $("#btn-export"),
@@ -386,10 +482,6 @@
     noteInput: $("#note-input"),
     noteList: $("#note-list"),
     notesEmpty: $("#notes-empty"),
-    habitForm: $("#habit-form"),
-    habitInput: $("#habit-input"),
-    habitList: $("#habit-list"),
-    habitsEmpty: $("#habits-empty"),
     waterEnabled: $("#water-enabled"),
     waterInterval: $("#water-interval"),
     waterStatus: $("#water-status"),
@@ -411,11 +503,47 @@
     saveState(state);
   }
 
+  // —— Tabs ——
+  function setActiveTab(tab, opts) {
+    if (!TABS.includes(tab)) tab = "tasks";
+    activeTab = tab;
+    persistActiveTab(tab);
+    document.querySelectorAll(".mod-tabs__btn").forEach((btn) => {
+      const on = btn.dataset.tab === tab;
+      btn.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    document.querySelectorAll(".panel--module").forEach((panel) => {
+      const on = panel.dataset.module === tab;
+      panel.hidden = !on;
+    });
+    if (!opts || !opts.silent) {
+      // focus nothing special
+    }
+  }
+
   // —— Tasks ——
   function getTodayTasks() {
     const key = todayKey();
     if (!state.tasksByDate[key]) state.tasksByDate[key] = [];
     return state.tasksByDate[key];
+  }
+
+  function findTask(id) {
+    return getTodayTasks().find((t) => t.id === id) || null;
+  }
+
+  function setTaskStatus(task, status) {
+    status = normalizeStatus(status, false);
+    task.status = status;
+    if (status === "done") {
+      task.done = true;
+      task.completedAt = new Date().toISOString();
+      task.completedDateKey = todayKey();
+    } else {
+      task.done = false;
+      task.completedAt = null;
+      task.completedDateKey = null;
+    }
   }
 
   function collectAllTags() {
@@ -447,224 +575,266 @@
     }
   }
 
-  function filteredTasks() {
-    return getTodayTasks().filter((t) => {
-      if (filterPriority !== "all" && normalizePriority(t.priority) !== filterPriority) {
-        return false;
-      }
-      if (filterTag !== "all") {
-        const tags = t.tags || [];
-        if (!tags.includes(filterTag)) return false;
-      }
-      return true;
-    });
+  function passesFilters(t) {
+    if (filterTag !== "all") {
+      const tags = t.tags || [];
+      if (!tags.includes(filterTag)) return false;
+    }
+    if (filterEisen !== "all" && eisenBucket(t) !== filterEisen) return false;
+    return true;
   }
 
   function updateFilterClearBtn() {
-    const active = filterPriority !== "all" || filterTag !== "all";
+    const active = filterTag !== "all" || filterEisen !== "all";
     els.btnClearFilters.hidden = !active;
   }
 
+  function createTaskCard(task) {
+    const li = document.createElement("li");
+    li.className =
+      "task-card" +
+      (task.important && task.urgent ? " task-card--priority-boost" : "");
+    li.dataset.id = task.id;
+    li.draggable = true;
+
+    const top = document.createElement("div");
+    top.className = "task-card__top";
+
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.className = "task-card__check";
+    check.checked = task.status === "done";
+    check.title = task.status === "done" ? "移回待辦" : "標為完成";
+    check.setAttribute("aria-label", check.title);
+    check.addEventListener("change", () => {
+      if (check.checked) {
+        setTaskStatus(task, "done");
+      } else {
+        setTaskStatus(task, "todo");
+      }
+      persist();
+      renderTasks();
+    });
+
+    const text = document.createElement("span");
+    text.className = "task-card__text";
+    text.textContent = task.text;
+
+    top.append(check, text);
+
+    const badges = document.createElement("div");
+    badges.className = "task-card__badges";
+    if (task.important) {
+      const b = document.createElement("span");
+      b.className = "eisen-badge eisen-badge--important";
+      b.textContent = "重要";
+      badges.appendChild(b);
+    }
+    if (task.urgent) {
+      const b = document.createElement("span");
+      b.className = "eisen-badge eisen-badge--urgent";
+      b.textContent = "緊急";
+      badges.appendChild(b);
+    }
+    (task.tags || []).forEach((tag) => {
+      const chip = document.createElement("span");
+      chip.className = "tag-chip";
+      chip.textContent = tag;
+      badges.appendChild(chip);
+    });
+
+    const flags = document.createElement("div");
+    flags.className = "task-card__flags";
+
+    const impLabel = document.createElement("label");
+    impLabel.className = "flag-toggle";
+    const impCb = document.createElement("input");
+    impCb.type = "checkbox";
+    impCb.dataset.flag = "important";
+    impCb.checked = !!task.important;
+    impCb.addEventListener("change", () => {
+      task.important = impCb.checked;
+      persist();
+      renderTasks();
+    });
+    impLabel.append(impCb, document.createTextNode("重要"));
+
+    const urgLabel = document.createElement("label");
+    urgLabel.className = "flag-toggle";
+    const urgCb = document.createElement("input");
+    urgCb.type = "checkbox";
+    urgCb.dataset.flag = "urgent";
+    urgCb.checked = !!task.urgent;
+    urgCb.addEventListener("change", () => {
+      task.urgent = urgCb.checked;
+      persist();
+      renderTasks();
+    });
+    urgLabel.append(urgCb, document.createTextNode("緊急"));
+
+    flags.append(impLabel, urgLabel);
+
+    const tagsInput = document.createElement("input");
+    tagsInput.type = "text";
+    tagsInput.className = "task-card__tags-input";
+    tagsInput.title = "標籤（逗號分隔）";
+    tagsInput.placeholder = "標籤";
+    tagsInput.value = (task.tags || []).join(", ");
+    tagsInput.addEventListener("change", () => {
+      task.tags = parseTags(tagsInput.value);
+      persist();
+      renderTasks();
+    });
+    tagsInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        tagsInput.blur();
+      }
+    });
+
+    const actions = document.createElement("div");
+    actions.className = "task-card__actions";
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "btn btn--tiny btn--ghost";
+    del.textContent = "刪";
+    del.title = "刪除";
+    del.addEventListener("click", () => {
+      const list = getTodayTasks();
+      state.tasksByDate[todayKey()] = list.filter((t) => t.id !== task.id);
+      persist();
+      renderTasks();
+      toast("已刪除任務");
+    });
+    actions.appendChild(del);
+
+    li.append(top, badges, flags, tagsInput, actions);
+
+    li.addEventListener("dragstart", (e) => {
+      if (e.target.closest("input, button, label, select, textarea, a")) {
+        e.preventDefault();
+        return;
+      }
+      dragTaskId = task.id;
+      li.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", task.id);
+    });
+    li.addEventListener("dragend", () => {
+      dragTaskId = null;
+      li.classList.remove("dragging");
+      document.querySelectorAll(".kanban__col.drag-over").forEach((el) =>
+        el.classList.remove("drag-over")
+      );
+    });
+
+    return li;
+  }
+
+  function bindColumnDrop(col) {
+    const status = col.dataset.status;
+    const list = col.querySelector("[data-list]");
+
+    const onDragOver = (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      col.classList.add("drag-over");
+    };
+    const onDragLeave = (e) => {
+      if (!col.contains(e.relatedTarget)) {
+        col.classList.remove("drag-over");
+      }
+    };
+    const onDrop = (e) => {
+      e.preventDefault();
+      col.classList.remove("drag-over");
+      const id = e.dataTransfer.getData("text/plain") || dragTaskId;
+      if (!id) return;
+      const task = findTask(id);
+      if (!task) return;
+      if (task.status === status) return;
+      setTaskStatus(task, status);
+      persist();
+      renderTasks();
+      toast(`已移至「${STATUS_LABEL[status]}」`);
+    };
+
+    col.addEventListener("dragover", onDragOver);
+    col.addEventListener("dragleave", onDragLeave);
+    col.addEventListener("drop", onDrop);
+    if (list) {
+      list.addEventListener("dragover", onDragOver);
+      list.addEventListener("drop", onDrop);
+    }
+  }
+
+  let columnsBound = false;
+  function ensureColumnBindings() {
+    if (columnsBound) return;
+    els.kanban.querySelectorAll(".kanban__col").forEach(bindColumnDrop);
+    columnsBound = true;
+  }
+
   function renderTasks() {
+    ensureColumnBindings();
     const tasks = getTodayTasks();
-    const shown = filteredTasks();
-    const remaining = tasks.filter((t) => !t.done).length;
-    els.tasksRemaining.textContent =
-      remaining === 0 && tasks.length > 0
-        ? "全部完成 🎉"
-        : `尚餘 ${remaining} 項 · 共 ${tasks.length} 項`;
+    const today = todayKey();
+    const boardTasks = tasks.filter((t) => isDoneVisibleOnBoard(t, today));
+    const filtered = boardTasks.filter(passesFilters);
+
+    const openCount = tasks.filter((t) => t.status !== "done").length;
+    const hiddenDone = tasks.filter(
+      (t) => t.status === "done" && !isDoneVisibleOnBoard(t, today)
+    ).length;
+
+    let meta = `尚餘 ${openCount} 項 · 共 ${tasks.length} 項`;
+    if (openCount === 0 && tasks.some((t) => t.status === "done")) {
+      meta = "全部完成 🎉";
+    }
+    if (hiddenDone > 0) {
+      meta += ` · ${hiddenDone} 項已完成逾 3 日（已隱藏）`;
+    }
+    els.tasksRemaining.textContent = meta;
 
     updateFilterTagOptions();
     updateFilterClearBtn();
 
-    els.taskList.innerHTML = "";
     els.tasksEmpty.hidden = true;
     els.tasksFilteredEmpty.hidden = true;
+
+    STATUSES.forEach((st) => {
+      const col = els.kanban.querySelector(`.kanban__col[data-status="${st}"]`);
+      const list = col.querySelector("[data-list]");
+      const countEl = col.querySelector("[data-count]");
+      list.innerHTML = "";
+      const colTasks = filtered
+        .filter((t) => t.status === st)
+        .slice()
+        .sort(sortTasksInColumn);
+      countEl.textContent = String(colTasks.length);
+      colTasks.forEach((task) => list.appendChild(createTaskCard(task)));
+    });
+
+    // WIP soft hint
+    const doingCount = boardTasks.filter((t) => t.status === "doing").length;
+    if (els.wipHint) {
+      if (doingCount > WIP_SOFT_LIMIT) {
+        els.wipHint.classList.add("kanban__wip--soft");
+        els.wipHint.title = `目前進行中 ${doingCount} 項（建議 ≤ ${WIP_SOFT_LIMIT}）`;
+      } else {
+        els.wipHint.classList.remove("kanban__wip--soft");
+        els.wipHint.title = "建議同時進行不多於 3 項";
+      }
+    }
 
     if (tasks.length === 0) {
       els.tasksEmpty.hidden = false;
       return;
     }
-    if (shown.length === 0) {
+    if (filtered.length === 0 && boardTasks.length > 0) {
       els.tasksFilteredEmpty.hidden = false;
-      return;
     }
-
-    shown.forEach((task) => {
-      const fullList = getTodayTasks();
-      const index = fullList.findIndex((t) => t.id === task.id);
-      const prio = normalizePriority(task.priority);
-
-      const li = document.createElement("li");
-      li.className =
-        "task-item task-item--prio-" +
-        prio +
-        (task.done ? " task-item--done" : "");
-      li.dataset.id = task.id;
-      li.draggable = true;
-
-      const handle = document.createElement("button");
-      handle.type = "button";
-      handle.className = "task-item__handle";
-      handle.title = "拖曳排序";
-      handle.setAttribute("aria-label", "拖曳排序");
-      handle.textContent = "⋮⋮";
-
-      const check = document.createElement("input");
-      check.type = "checkbox";
-      check.className = "task-item__check";
-      check.checked = !!task.done;
-      check.title = task.done ? "標為未完成" : "標為完成";
-      check.setAttribute("aria-label", task.done ? "標為未完成" : "標為完成");
-      check.addEventListener("change", () => {
-        task.done = check.checked;
-        persist();
-        renderTasks();
-      });
-
-      const main = document.createElement("div");
-      main.className = "task-item__main";
-
-      const text = document.createElement("span");
-      text.className = "task-item__text";
-      text.textContent = task.text;
-
-      const meta = document.createElement("div");
-      meta.className = "task-item__meta";
-
-      const prioSelect = document.createElement("select");
-      prioSelect.className = "task-item__prio-select";
-      prioSelect.title = "優先級";
-      prioSelect.setAttribute("aria-label", "優先級");
-      ["high", "med", "low"].forEach((v) => {
-        const opt = document.createElement("option");
-        opt.value = v;
-        opt.textContent = PRIO_LABEL[v];
-        if (v === prio) opt.selected = true;
-        prioSelect.appendChild(opt);
-      });
-      prioSelect.addEventListener("change", () => {
-        task.priority = normalizePriority(prioSelect.value);
-        persist();
-        renderTasks();
-      });
-
-      const tagsInput = document.createElement("input");
-      tagsInput.type = "text";
-      tagsInput.className = "task-item__tags-input";
-      tagsInput.title = "標籤（逗號分隔）";
-      tagsInput.placeholder = "標籤";
-      tagsInput.value = (task.tags || []).join(", ");
-      tagsInput.addEventListener("change", () => {
-        task.tags = parseTags(tagsInput.value);
-        persist();
-        renderTasks();
-      });
-      tagsInput.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          tagsInput.blur();
-        }
-      });
-
-      meta.append(prioSelect, tagsInput);
-
-      main.append(text, meta);
-
-      const actions = document.createElement("div");
-      actions.className = "task-item__actions";
-
-      const up = document.createElement("button");
-      up.type = "button";
-      up.className = "btn btn--tiny btn--ghost";
-      up.textContent = "↑";
-      up.title = "上移";
-      up.disabled = index === 0;
-      up.addEventListener("click", () => moveTask(task.id, -1));
-
-      const down = document.createElement("button");
-      down.type = "button";
-      down.className = "btn btn--tiny btn--ghost";
-      down.textContent = "↓";
-      down.title = "下移";
-      down.disabled = index === fullList.length - 1;
-      down.addEventListener("click", () => moveTask(task.id, 1));
-
-      const del = document.createElement("button");
-      del.type = "button";
-      del.className = "btn btn--tiny btn--ghost";
-      del.textContent = "刪";
-      del.title = "刪除";
-      del.addEventListener("click", () => {
-        const list = getTodayTasks();
-        state.tasksByDate[todayKey()] = list.filter((t) => t.id !== task.id);
-        persist();
-        renderTasks();
-        toast("已刪除任務");
-      });
-
-      actions.append(up, down, del);
-
-      const left = document.createElement("div");
-      left.style.display = "flex";
-      left.style.alignItems = "flex-start";
-      left.style.gap = "0.45rem";
-      left.append(handle, check);
-
-      li.append(left, main, actions);
-
-      li.addEventListener("dragstart", (e) => {
-        dragTaskId = task.id;
-        li.classList.add("dragging");
-        e.dataTransfer.effectAllowed = "move";
-        e.dataTransfer.setData("text/plain", task.id);
-      });
-      li.addEventListener("dragend", () => {
-        dragTaskId = null;
-        li.classList.remove("dragging");
-        document.querySelectorAll(".task-item.drag-over").forEach((el) =>
-          el.classList.remove("drag-over")
-        );
-      });
-      li.addEventListener("dragover", (e) => {
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "move";
-        li.classList.add("drag-over");
-      });
-      li.addEventListener("dragleave", () => li.classList.remove("drag-over"));
-      li.addEventListener("drop", (e) => {
-        e.preventDefault();
-        li.classList.remove("drag-over");
-        const fromId = e.dataTransfer.getData("text/plain") || dragTaskId;
-        if (!fromId || fromId === task.id) return;
-        reorderTask(fromId, task.id);
-      });
-
-      els.taskList.appendChild(li);
-    });
-  }
-
-  function moveTask(id, delta) {
-    const list = getTodayTasks();
-    const i = list.findIndex((t) => t.id === id);
-    const j = i + delta;
-    if (i < 0 || j < 0 || j >= list.length) return;
-    const tmp = list[i];
-    list[i] = list[j];
-    list[j] = tmp;
-    persist();
-    renderTasks();
-  }
-
-  function reorderTask(fromId, toId) {
-    const list = getTodayTasks();
-    const from = list.findIndex((t) => t.id === fromId);
-    const to = list.findIndex((t) => t.id === toId);
-    if (from < 0 || to < 0) return;
-    const [item] = list.splice(from, 1);
-    list.splice(to, 0, item);
-    persist();
-    renderTasks();
   }
 
   function addTask(text) {
@@ -673,12 +843,17 @@
     getTodayTasks().unshift({
       id: uid(),
       text: trimmed,
+      status: "todo",
       done: false,
-      createdAt: new Date().toISOString(),
-      priority: normalizePriority(els.taskPriority.value),
+      important: !!els.taskImportant.checked,
+      urgent: !!els.taskUrgent.checked,
       tags: parseTags(els.taskTags.value),
+      createdAt: new Date().toISOString(),
+      completedAt: null,
+      completedDateKey: null,
     });
-    els.taskPriority.value = "med";
+    els.taskImportant.checked = false;
+    els.taskUrgent.checked = false;
     els.taskTags.value = "";
     persist();
     renderTasks();
@@ -688,7 +863,7 @@
     const yKey = yesterdayKey();
     const tKey = todayKey();
     const yTasks = state.tasksByDate[yKey] || [];
-    const unfinished = yTasks.filter((t) => !t.done);
+    const unfinished = yTasks.filter((t) => t.status !== "done" && !t.done);
     if (unfinished.length === 0) {
       toast("昨日沒有未完成任務");
       return;
@@ -701,7 +876,10 @@
       const nt = normalizeTask({
         ...t,
         id: uid(),
+        status: t.status === "doing" ? "doing" : "todo",
         done: false,
+        completedAt: null,
+        completedDateKey: null,
         createdAt: new Date().toISOString(),
         pulledFrom: yKey,
       });
@@ -715,108 +893,7 @@
     toast(added === 0 ? "昨日未完成項目已存在於今日" : `已帶入 ${added} 項未完成任務`);
   }
 
-  // —— Habits ——
-  function renderHabits() {
-    const today = todayKey();
-    const week = weekKeysAround(today);
-    els.habitList.innerHTML = "";
-
-    if (!state.habits.length) {
-      els.habitsEmpty.hidden = false;
-      return;
-    }
-    els.habitsEmpty.hidden = true;
-
-    state.habits.forEach((habit) => {
-      const li = document.createElement("li");
-      li.className = "habit-item";
-
-      const check = document.createElement("input");
-      check.type = "checkbox";
-      check.className = "habit-item__check";
-      check.checked = !!(habit.checkins && habit.checkins[today]);
-      check.title = check.checked ? "取消今日打卡" : "今日打卡";
-      check.setAttribute("aria-label", `${habit.name} 今日打卡`);
-      check.addEventListener("change", () => {
-        if (!habit.checkins) habit.checkins = {};
-        if (check.checked) {
-          habit.checkins[today] = true;
-        } else {
-          delete habit.checkins[today];
-        }
-        persist();
-        renderHabits();
-      });
-
-      const body = document.createElement("div");
-      body.className = "habit-item__body";
-
-      const name = document.createElement("p");
-      name.className = "habit-item__name";
-      name.textContent = habit.name;
-
-      const weekRow = document.createElement("div");
-      weekRow.className = "habit-item__week";
-      weekRow.setAttribute("aria-label", "本週打卡");
-
-      week.forEach((key, i) => {
-        const wrap = document.createElement("span");
-        wrap.style.display = "inline-flex";
-        wrap.style.flexDirection = "column";
-        wrap.style.alignItems = "center";
-        wrap.style.gap = "0.15rem";
-
-        const label = document.createElement("span");
-        label.className = "habit-dot__label";
-        label.textContent = DOW_MON_FIRST[i];
-
-        const dot = document.createElement("span");
-        dot.className = "habit-dot";
-        if (habit.checkins && habit.checkins[key]) {
-          dot.classList.add("habit-dot--done");
-        }
-        if (key === today) {
-          dot.classList.add("habit-dot--today");
-        }
-        dot.title = `${key} ${habit.checkins && habit.checkins[key] ? "已打卡" : "未打卡"}`;
-
-        wrap.append(label, dot);
-        weekRow.appendChild(wrap);
-      });
-
-      body.append(name, weekRow);
-
-      const del = document.createElement("button");
-      del.type = "button";
-      del.className = "btn btn--tiny btn--ghost habit-item__del";
-      del.textContent = "刪";
-      del.title = "刪除習慣";
-      del.addEventListener("click", () => {
-        if (!confirm(`刪除習慣「${habit.name}」？`)) return;
-        state.habits = state.habits.filter((h) => h.id !== habit.id);
-        persist();
-        renderHabits();
-        toast("已刪除習慣");
-      });
-
-      li.append(check, body, del);
-      els.habitList.appendChild(li);
-    });
-  }
-
-  function addHabit(name) {
-    const trimmed = name.trim();
-    if (!trimmed) return;
-    if (state.habits.some((h) => h.name === trimmed)) {
-      toast("此習慣已存在");
-      return;
-    }
-    state.habits.push({ id: uid(), name: trimmed.slice(0, 40), checkins: {} });
-    persist();
-    renderHabits();
-  }
-
-  // —— Water reminder (Web Notifications + optional SW) ——
+  // —— Water reminder ——
   function setWaterPermMsg(text, kind) {
     if (!text) {
       els.waterPermMsg.hidden = true;
@@ -882,16 +959,10 @@
     const last = state.waterReminder.lastNotifiedAt
       ? Date.parse(state.waterReminder.lastNotifiedAt)
       : 0;
-    if (!force && last && now - last < WATER_MIN_GAP_MS) {
-      return false;
-    }
-    // Also respect interval unless forced (test button)
+    if (!force && last && now - last < WATER_MIN_GAP_MS) return false;
     if (!force && last) {
       const gap = (state.waterReminder.intervalMinutes || 60) * 60 * 1000;
-      // Allow slight early fire within 5% for timer drift, but block if too soon
-      if (now - last < gap * 0.9) {
-        return false;
-      }
+      if (now - last < gap * 0.9) return false;
     }
 
     const title = "飲杯水";
@@ -910,7 +981,6 @@
         const reg = await navigator.serviceWorker.ready;
         await reg.showNotification(title, options);
       } else {
-        // Fallback: page Notification (works while tab is open)
         // eslint-disable-next-line no-new
         new Notification(title, options);
       }
@@ -954,7 +1024,6 @@
       showWaterNotification(false);
     }, ms);
 
-    // Tell SW the interval (best-effort background while controlled)
     if (navigator.serviceWorker && navigator.serviceWorker.controller) {
       navigator.serviceWorker.controller.postMessage({
         type: "water-config",
@@ -1030,9 +1099,7 @@
     state.waterReminder.intervalMinutes = WATER_INTERVALS.includes(val) ? val : 60;
     persist();
     updateWaterUI();
-    if (state.waterReminder.enabled) {
-      scheduleWaterTimer();
-    }
+    if (state.waterReminder.enabled) scheduleWaterTimer();
   }
 
   async function onWaterTest() {
@@ -1053,7 +1120,7 @@
     if (ok) toast("已發送測試通知");
   }
 
-  // —— Calendar / events ——
+  // —— Calendar ——
   function renderWeekStrip() {
     const today = todayKey();
     const keys = weekKeysAround(today);
@@ -1300,7 +1367,7 @@
     renderNotes();
   }
 
-  // —— Export / Import JSON ——
+  // —— Export / Import ——
   function buildExportPayload() {
     return {
       version: EXPORT_VERSION,
@@ -1308,13 +1375,12 @@
       exportedAt: new Date().toISOString(),
       timezone: TZ,
       data: {
-        version: state.version || DATA_VERSION,
+        version: DATA_VERSION,
         seeded: !!state.seeded,
         tasksByDate: state.tasksByDate || {},
         events: Array.isArray(state.events) ? state.events : [],
         scratch: typeof state.scratch === "string" ? state.scratch : "",
         notes: Array.isArray(state.notes) ? state.notes : [],
-        habits: Array.isArray(state.habits) ? state.habits : [],
         waterReminder: normalizeWater(state.waterReminder),
       },
     };
@@ -1428,26 +1494,16 @@
     });
 
     const scratch = typeof data.scratch === "string" ? data.scratch : "";
-
-    // habits: optional in v1 exports
-    let habits = [];
-    if (data.habits != null) {
-      if (!Array.isArray(data.habits)) {
-        throw new Error("檔案格式不正確：habits 必須為陣列。");
-      }
-      habits = data.habits.map(normalizeHabit).filter(Boolean);
-    }
-
+    // Ignore leftover habits from old exports
     const waterReminder = normalizeWater(data.waterReminder);
 
     return {
-      version: typeof data.version === "number" ? data.version : DATA_VERSION,
+      version: DATA_VERSION,
       seeded: false,
       tasksByDate: normalizedTasks,
       events,
       scratch,
       notes,
-      habits,
       waterReminder,
       _envelopeVersion: envelope && envelope.version != null ? envelope.version : null,
       _exportedAt: envelope && typeof envelope.exportedAt === "string" ? envelope.exportedAt : null,
@@ -1468,7 +1524,7 @@
         }
         const normalized = normalizeImportedData(parsed);
         const ok = confirm(
-          "匯入會「取代」目前本機所有工作台資料（任務、行程、筆記、草稿、習慣、飲水提醒）。\n確定繼續？"
+          "匯入會「取代」目前本機所有工作台資料（任務、行程、筆記、草稿、飲水提醒）。\n確定繼續？"
         );
         if (!ok) {
           toast("已取消匯入");
@@ -1476,20 +1532,19 @@
         }
         clearWaterTimer();
         state = {
-          version: normalized.version,
+          version: DATA_VERSION,
           seeded: false,
           tasksByDate: normalized.tasksByDate,
           events: normalized.events,
           scratch: normalized.scratch,
           notes: normalized.notes,
-          habits: normalized.habits,
           waterReminder: normalized.waterReminder,
         };
         persist();
         selectedDate = todayKey();
-        filterPriority = "all";
         filterTag = "all";
-        els.filterPriority.value = "all";
+        filterEisen = "all";
+        els.filterEisen.value = "all";
         renderAll();
         if (state.waterReminder.enabled) {
           enableWaterReminder();
@@ -1510,7 +1565,6 @@
     reader.readAsText(file, "UTF-8");
   }
 
-  // —— Wipe seed ——
   function wipeSeedData() {
     if (!confirm("確定清除所有本機資料（含示範內容）並重新開始？")) return;
     clearWaterTimer();
@@ -1522,32 +1576,30 @@
       events: [],
       scratch: "",
       notes: [],
-      habits: [],
       waterReminder: defaultWater(),
     };
     persist();
     selectedDate = todayKey();
-    filterPriority = "all";
     filterTag = "all";
-    els.filterPriority.value = "all";
+    filterEisen = "all";
+    els.filterEisen.value = "all";
     renderAll();
     updateWaterUI();
     setWaterPermMsg("");
     toast("已清除所有資料");
   }
 
-  // —— Render all ——
   function renderAll() {
     els.headerDate.textContent = formatHeaderDate(todayKey());
+    setActiveTab(activeTab, { silent: true });
     renderTasks();
     renderWeekStrip();
     renderEvents();
     renderNotes();
-    renderHabits();
     updateWaterUI();
   }
 
-  // —— Events wiring ——
+  // —— Wiring ——
   els.taskForm.addEventListener("submit", (e) => {
     e.preventDefault();
     addTask(els.taskInput.value);
@@ -1555,34 +1607,39 @@
     els.taskInput.focus();
   });
 
-  els.filterPriority.addEventListener("change", () => {
-    filterPriority = els.filterPriority.value;
-    renderTasks();
-  });
-
   els.filterTag.addEventListener("change", () => {
     filterTag = els.filterTag.value;
     renderTasks();
   });
-
+  els.filterEisen.addEventListener("change", () => {
+    filterEisen = els.filterEisen.value;
+    renderTasks();
+  });
   els.btnClearFilters.addEventListener("click", () => {
-    filterPriority = "all";
     filterTag = "all";
-    els.filterPriority.value = "all";
+    filterEisen = "all";
     els.filterTag.value = "all";
+    els.filterEisen.value = "all";
     renderTasks();
   });
 
-  els.habitForm.addEventListener("submit", (e) => {
-    e.preventDefault();
-    addHabit(els.habitInput.value);
-    els.habitInput.value = "";
-    els.habitInput.focus();
+  document.querySelectorAll(".mod-tabs__btn").forEach((btn) => {
+    btn.addEventListener("click", () => setActiveTab(btn.dataset.tab));
   });
 
-  els.waterEnabled.addEventListener("change", () => {
-    onWaterToggle();
+  document.addEventListener("keydown", (e) => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    const tag = (e.target && e.target.tagName) || "";
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (e.target && e.target.isContentEditable)) {
+      return;
+    }
+    if (e.key === "1") setActiveTab("tasks");
+    else if (e.key === "2") setActiveTab("calendar");
+    else if (e.key === "3") setActiveTab("notes");
+    else if (e.key === "4") setActiveTab("reminders");
   });
+
+  els.waterEnabled.addEventListener("change", () => onWaterToggle());
   els.waterInterval.addEventListener("change", onWaterIntervalChange);
   els.btnWaterTest.addEventListener("click", onWaterTest);
 
@@ -1615,7 +1672,6 @@
     }
   });
 
-  // Listen for SW messages (e.g. notification shown)
   if (navigator.serviceWorker) {
     navigator.serviceWorker.addEventListener("message", (event) => {
       const data = event.data || {};
@@ -1626,7 +1682,6 @@
     });
   }
 
-  // Midnight rollover
   setInterval(() => {
     const now = todayKey();
     if (els.headerDate.dataset.day !== now) {
@@ -1641,7 +1696,6 @@
   els.headerDate.dataset.day = todayKey();
   renderAll();
 
-  // Resume water reminder if previously enabled
   registerServiceWorker().then(() => {
     if (state.waterReminder.enabled) {
       if ("Notification" in window && Notification.permission === "granted") {
@@ -1656,7 +1710,6 @@
         updateWaterUI();
         setWaterPermMsg("通知權限被拒絕，已自動關閉飲水提醒。", "error");
       } else {
-        // permission default — leave enabled flag but ask again via UI
         updateWaterUI();
         setWaterPermMsg("請再次開啟「啟用提醒」以授予通知權限。", "error");
       }
