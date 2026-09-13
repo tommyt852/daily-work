@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="每日工作台 — 任務、日曆與筆記，全部儲存於本機。" />
+  <meta name="description" content="每日工作台 — 任務、日曆、習慣與筆記，全部儲存於本機。" />
   <title>每日工作台</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -59,11 +59,54 @@
           />
           <button type="submit" class="btn btn--primary" aria-label="新增任務">新增</button>
         </form>
+        <div class="composer-meta" id="task-composer-meta">
+          <label class="composer-meta__field">
+            <span class="composer-meta__label">優先</span>
+            <select id="task-priority" class="composer-meta__select" title="優先級">
+              <option value="high">高</option>
+              <option value="med" selected>中</option>
+              <option value="low">低</option>
+            </select>
+          </label>
+          <label class="composer-meta__field composer-meta__field--grow">
+            <span class="composer-meta__label">標籤</span>
+            <input
+              type="text"
+              id="task-tags"
+              class="composer-meta__input"
+              placeholder="例如：工作, 私人（逗號分隔）"
+              maxlength="80"
+            />
+          </label>
+        </div>
+
+        <div class="task-filters" id="task-filters">
+          <label class="task-filters__field">
+            <span class="task-filters__label">篩選優先</span>
+            <select id="filter-priority" class="composer-meta__select">
+              <option value="all">全部</option>
+              <option value="high">高</option>
+              <option value="med">中</option>
+              <option value="low">低</option>
+            </select>
+          </label>
+          <label class="task-filters__field">
+            <span class="task-filters__label">篩選標籤</span>
+            <select id="filter-tag" class="composer-meta__select">
+              <option value="all">全部</option>
+            </select>
+          </label>
+          <button type="button" class="btn btn--tiny btn--ghost" id="btn-clear-filters" hidden>清除篩選</button>
+        </div>
 
         <ul class="task-list" id="task-list" role="list"></ul>
         <div class="empty" id="tasks-empty" hidden>
           <p class="empty__title">今日尚無任務</p>
           <p class="empty__desc">輸入上方欄位，按 Enter 即可開始。亦可「帶入昨日未完成」。</p>
+        </div>
+        <div class="empty" id="tasks-filtered-empty" hidden>
+          <p class="empty__title">沒有符合篩選的任務</p>
+          <p class="empty__desc">試試調整優先級或標籤篩選。</p>
         </div>
       </section>
 
@@ -127,6 +170,58 @@
         <div class="empty" id="notes-empty" hidden>
           <p class="empty__title">尚無筆記</p>
           <p class="empty__desc">用上方草稿區整理思緒，或直接輸入一行快速筆記。</p>
+        </div>
+      </section>
+
+      <!-- 4. Habits + water -->
+      <section class="panel panel--habits" aria-labelledby="habits-heading">
+        <div class="panel__head">
+          <div>
+            <h2 id="habits-heading">習慣打卡</h2>
+            <p class="panel__meta">本週進度（星期一至日）</p>
+          </div>
+        </div>
+
+        <form class="composer composer--habit" id="habit-form" autocomplete="off">
+          <label class="sr-only" for="habit-input">新增習慣</label>
+          <input
+            type="text"
+            id="habit-input"
+            class="composer__input"
+            placeholder="新增習慣…（例如：散步）"
+            maxlength="40"
+          />
+          <button type="submit" class="btn btn--primary btn--sm" aria-label="新增習慣">新增</button>
+        </form>
+
+        <ul class="habit-list" id="habit-list" role="list"></ul>
+        <div class="empty" id="habits-empty" hidden>
+          <p class="empty__title">尚未設定習慣</p>
+          <p class="empty__desc">新增一項習慣，每日打卡並查看本週圓點。</p>
+        </div>
+
+        <div class="water-block" id="water-block">
+          <div class="water-block__head">
+            <h3 class="water-block__title">飲水提醒</h3>
+            <p class="water-block__hint" id="water-status">關閉中</p>
+          </div>
+          <div class="water-block__controls">
+            <label class="water-toggle">
+              <input type="checkbox" id="water-enabled" />
+              <span>啟用提醒</span>
+            </label>
+            <label class="composer-meta__field">
+              <span class="composer-meta__label">間隔</span>
+              <select id="water-interval" class="composer-meta__select" title="提醒間隔（分鐘）">
+                <option value="30">30 分鐘</option>
+                <option value="45">45 分鐘</option>
+                <option value="60" selected>60 分鐘</option>
+                <option value="90">90 分鐘</option>
+              </select>
+            </label>
+            <button type="button" class="btn btn--tiny btn--ghost" id="btn-water-test" title="立即測試一則通知">測試</button>
+          </div>
+          <p class="water-block__note" id="water-perm-msg" hidden></p>
         </div>
       </section>
     </main>
