@@ -20,7 +20,35 @@
   const STATUS_LABEL = { todo: "待辦", doing: "進行中", done: "完成" };
   const WIP_SOFT_LIMIT = 3;
   const DONE_VISIBLE_DAYS = 3; // hide when age >= 3 HK calendar days
-  const TABS = ["tasks", "calendar", "notes", "reminders"];
+  const TABS = ["tasks", "calendar", "notes", "reminders", "weather"];
+  const WEATHER_GRID_KEY = "daily-workbench:weather-grid";
+  const WEATHER_SETTINGS_KEY = "daily-workbench:weather-settings";
+  const CSDI_GRID_QUERY =
+    "https://portal.csdi.gov.hk/server/rest/services/common/hko_rcd_1634958531320_87755/MapServer/0/query" +
+    "?where=1%3D1&outFields=Latitude_degree_%2CLongitude_degree_%2COBJECTID&returnGeometry=true&f=json&resultRecordCount=2000";
+  const HKO_RHRREAD =
+    "https://data.weather.gov.hk/weatherAPI/opendata/weather.php?dataType=rhrread&lang=tc";
+  const WEATHER_STALE_MS = 20 * 60 * 1000;
+  const HK_DISTRICTS = [
+    { place: "中西區", lat: 22.2819, lon: 114.1582 },
+    { place: "灣仔", lat: 22.2770, lon: 114.1733 },
+    { place: "東區", lat: 22.2841, lon: 114.2242 },
+    { place: "南區", lat: 22.2470, lon: 114.1589 },
+    { place: "油尖旺", lat: 22.3119, lon: 114.1709 },
+    { place: "深水埗", lat: 22.3308, lon: 114.1628 },
+    { place: "九龍城", lat: 22.3282, lon: 114.1915 },
+    { place: "黃大仙", lat: 22.3429, lon: 114.1950 },
+    { place: "觀塘", lat: 22.3125, lon: 114.2257 },
+    { place: "荃灣", lat: 22.3714, lon: 114.1139 },
+    { place: "屯門", lat: 22.3910, lon: 113.9770 },
+    { place: "元朗", lat: 22.4445, lon: 114.0222 },
+    { place: "北區", lat: 22.4947, lon: 114.1380 },
+    { place: "大埔", lat: 22.4508, lon: 114.1644 },
+    { place: "西貢", lat: 22.3819, lon: 114.2734 },
+    { place: "沙田", lat: 22.3847, lon: 114.1877 },
+    { place: "葵青", lat: 22.3578, lon: 114.1220 },
+    { place: "離島區", lat: 22.2860, lon: 113.9430 },
+  ];
 
   // —— Date helpers (Asia/Hong_Kong) ——
   function hkParts(date = new Date()) {
@@ -721,6 +749,29 @@
     btnServerImport: $("#btn-server-import"),
     btnServerExport: $("#btn-server-export"),
     toast: $("#toast"),
+    weatherImportStatus: $("#weather-import-status"),
+    weatherImportMsg: $("#weather-import-msg"),
+    weatherImportMeta: $("#weather-import-meta"),
+    btnWeatherImport: $("#btn-weather-import"),
+    weatherFile: $("#weather-file"),
+    btnWeatherClear: $("#btn-weather-clear"),
+    weatherMapHint: $("#weather-map-hint"),
+    weatherMapEl: $("#weather-map"),
+    weatherAlertEnabled: $("#weather-alert-enabled"),
+    weatherThreshold: $("#weather-threshold"),
+    weatherPinDistrict: $("#weather-pin-district"),
+    weatherPinStatus: $("#weather-pin-status"),
+    weatherPinMsg: $("#weather-pin-msg"),
+    btnWeatherUnpin: $("#btn-weather-unpin"),
+    btnWeatherExportPin: $("#btn-weather-export-pin"),
+    weatherDistrict: $("#weather-district"),
+    weatherRhrStatus: $("#weather-rhr-status"),
+    weatherRhrValue: $("#weather-rhr-value"),
+    btnWeatherRhrRefresh: $("#btn-weather-rhr-refresh"),
+    weatherOmStatus: $("#weather-om-status"),
+    weatherOmBanner: $("#weather-om-banner"),
+    weatherOmValue: $("#weather-om-value"),
+    btnWeatherOmRefresh: $("#btn-weather-om-refresh"),
   };
 
   function toast(msg) {
@@ -751,6 +802,12 @@
     });
     if (!opts || !opts.silent) {
       // focus nothing special
+    }
+    if (tab === "weather") {
+      setTimeout(() => {
+        if (weatherMap) weatherMap.invalidateSize();
+        ensureWeatherBootstrapped();
+      }, 40);
     }
   }
 
@@ -2747,7 +2804,805 @@
     renderNotes();
     updateWaterUI();
     updateAlertsUI();
+    updateWeatherImportUI();
+    updateWeatherPinUI();
+    updateWeatherFallbackVisibility();
   }
+
+
+  // —— Weather (HKO nowcast CSV + CSDI map + pin alerts) ——
+  let weatherGrid = loadWeatherGrid();
+  let weatherSettings = loadWeatherSettings();
+  let weatherMap = null;
+  let weatherLayer = null;
+  let weatherPinMarker = null;
+  let csdiPoints = [];
+  let weatherBootstrapped = false;
+  let weatherAlertTimerId = null;
+  let rhrCache = null;
+
+  function defaultWeatherSettings() {
+    return {
+      pin: null,
+      thresholdMm: 1,
+      alertsEnabled: false,
+      lastAlertKey: null,
+      lastAlertAt: null,
+      selectedDistrict: "沙田",
+    };
+  }
+
+  function loadWeatherSettings() {
+    try {
+      const raw = localStorage.getItem(WEATHER_SETTINGS_KEY);
+      if (!raw) return defaultWeatherSettings();
+      const o = JSON.parse(raw);
+      const base = defaultWeatherSettings();
+      if (!o || typeof o !== "object") return base;
+      const thr = Number(o.thresholdMm);
+      base.thresholdMm = Number.isFinite(thr) && thr > 0 ? thr : 1;
+      base.alertsEnabled = !!o.alertsEnabled;
+      base.lastAlertKey = typeof o.lastAlertKey === "string" ? o.lastAlertKey : null;
+      base.lastAlertAt = typeof o.lastAlertAt === "string" ? o.lastAlertAt : null;
+      if (typeof o.selectedDistrict === "string" && o.selectedDistrict) {
+        base.selectedDistrict = o.selectedDistrict;
+      }
+      if (o.pin && typeof o.pin === "object") {
+        if (o.pin.type === "cell" && Number.isFinite(o.pin.lat) && Number.isFinite(o.pin.lon)) {
+          base.pin = {
+            type: "cell",
+            lat: Number(o.pin.lat),
+            lon: Number(o.pin.lon),
+            objectId: o.pin.objectId != null ? o.pin.objectId : null,
+          };
+        } else if (o.pin.type === "district" && typeof o.pin.place === "string") {
+          base.pin = { type: "district", place: o.pin.place };
+        }
+      }
+      return base;
+    } catch {
+      return defaultWeatherSettings();
+    }
+  }
+
+  function persistWeatherSettings() {
+    try {
+      localStorage.setItem(WEATHER_SETTINGS_KEY, JSON.stringify(weatherSettings));
+    } catch (err) {
+      console.error(err);
+      toast("無法儲存天氣設定（localStorage 可能已滿）");
+    }
+  }
+
+  function loadWeatherGrid() {
+    try {
+      const raw = localStorage.getItem(WEATHER_GRID_KEY);
+      if (!raw) return null;
+      const o = JSON.parse(raw);
+      if (!o || typeof o !== "object" || !o.cells || typeof o.cells !== "object") return null;
+      return o;
+    } catch {
+      return null;
+    }
+  }
+
+  function persistWeatherGrid() {
+    try {
+      if (!weatherGrid) {
+        localStorage.removeItem(WEATHER_GRID_KEY);
+        return;
+      }
+      localStorage.setItem(WEATHER_GRID_KEY, JSON.stringify(weatherGrid));
+    } catch (err) {
+      console.error(err);
+      toast("無法儲存降雨網格（檔案可能太大或空間不足）");
+    }
+  }
+
+  function cellKey(lat, lon) {
+    return `${Number(lat).toFixed(3)},${Number(lon).toFixed(3)}`;
+  }
+
+  function parseHkoDateTime(s) {
+    if (typeof s !== "string" || !/^\d{12}$/.test(s)) return null;
+    const y = Number(s.slice(0, 4));
+    const m = Number(s.slice(4, 6));
+    const d = Number(s.slice(6, 8));
+    const hh = Number(s.slice(8, 10));
+    const mm = Number(s.slice(10, 12));
+    // Interpret as Hong Kong local wall time (UTC+8, no DST)
+    return new Date(Date.UTC(y, m - 1, d, hh - 8, mm, 0));
+  }
+
+  function formatHkoDateTime(s) {
+    const dt = parseHkoDateTime(s);
+    if (!dt) return s || "—";
+    return new Intl.DateTimeFormat("zh-HK", {
+      timeZone: TZ,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).format(dt);
+  }
+
+  function rainColor(mm) {
+    const v = Number(mm) || 0;
+    if (v <= 0) return "#dce8e2";
+    if (v < 1) return "#9fd4ff";
+    if (v < 5) return "#4fc3f7";
+    if (v < 10) return "#ffd54f";
+    if (v < 20) return "#ff9800";
+    if (v < 40) return "#e53935";
+    return "#6a1b9a";
+  }
+
+  function setWeatherImportMsg(text, kind) {
+    if (!els.weatherImportMsg) return;
+    if (!text) {
+      els.weatherImportMsg.hidden = true;
+      els.weatherImportMsg.textContent = "";
+      els.weatherImportMsg.className = "weather-block__note";
+      return;
+    }
+    els.weatherImportMsg.hidden = false;
+    els.weatherImportMsg.textContent = text;
+    els.weatherImportMsg.className =
+      "weather-block__note" +
+      (kind === "error" ? " weather-block__note--error" : kind === "ok" ? " weather-block__note--ok" : "");
+  }
+
+  function setWeatherPinMsg(text, kind) {
+    if (!els.weatherPinMsg) return;
+    if (!text) {
+      els.weatherPinMsg.hidden = true;
+      els.weatherPinMsg.textContent = "";
+      els.weatherPinMsg.className = "weather-block__note";
+      return;
+    }
+    els.weatherPinMsg.hidden = false;
+    els.weatherPinMsg.textContent = text;
+    els.weatherPinMsg.className =
+      "weather-block__note" +
+      (kind === "error" ? " weather-block__note--error" : kind === "ok" ? " weather-block__note--ok" : "");
+  }
+
+  function updateWeatherImportUI() {
+    if (!els.weatherImportStatus) return;
+    if (!weatherGrid || !weatherGrid.updateTime) {
+      els.weatherImportStatus.textContent = "尚未匯入";
+      if (els.weatherImportMeta) {
+        els.weatherImportMeta.textContent =
+          "支援 HKO 五欄：更新時間、完結時間、緯度、經度、半小時臨近雨量 (mm)。匯入後只保留同 CSDI 網格點對應嘅資料，存於 localStorage。";
+      }
+      return;
+    }
+    const importedAt = weatherGrid.importedAt
+      ? formatNoteTime(weatherGrid.importedAt)
+      : "—";
+    const n = weatherGrid.cells ? Object.keys(weatherGrid.cells).length : 0;
+    els.weatherImportStatus.textContent = `已匯入 · ${n} 點`;
+    if (els.weatherImportMeta) {
+      els.weatherImportMeta.textContent =
+        `資料更新：${formatHkoDateTime(weatherGrid.updateTime)}（香港時間）· 上次匯入：${importedAt}` +
+        (weatherGrid.fileName ? ` · 檔案：${weatherGrid.fileName}` : "");
+    }
+    const upd = parseHkoDateTime(weatherGrid.updateTime);
+    if (upd && Date.now() - upd.getTime() > WEATHER_STALE_MS) {
+      setWeatherImportMsg(
+        "匯入嘅臨近預報已超過約 20 分鐘，建議重新下載最新 CSV 再匯入。",
+        "error"
+      );
+    }
+  }
+
+  function updateWeatherFallbackVisibility() {
+    const noCsv = !weatherGrid || !weatherGrid.cells || !Object.keys(weatherGrid.cells).length;
+    if (els.weatherOmBanner) els.weatherOmBanner.hidden = !noCsv;
+    if (els.weatherOmStatus) {
+      els.weatherOmStatus.textContent = noCsv
+        ? "未匯入 CSV — 可選用粗略後備"
+        : "已有 HKO CSV — 後備僅供參考，唔會當成臨近預報";
+    }
+  }
+
+  function resolvePinLatLon() {
+    const pin = weatherSettings.pin;
+    if (!pin) return null;
+    if (pin.type === "cell") return { lat: pin.lat, lon: pin.lon, label: `${pin.lat.toFixed(3)}, ${pin.lon.toFixed(3)}` };
+    if (pin.type === "district") {
+      const d = HK_DISTRICTS.find((x) => x.place === pin.place);
+      if (!d) return null;
+      return { lat: d.lat, lon: d.lon, label: pin.place };
+    }
+    return null;
+  }
+
+  function lookupRainAt(lat, lon) {
+    if (!weatherGrid || !weatherGrid.cells) return null;
+    const exact = weatherGrid.cells[cellKey(lat, lon)];
+    if (exact) return exact;
+    // nearest among stored cells
+    let best = null;
+    let bestD = Infinity;
+    for (const c of Object.values(weatherGrid.cells)) {
+      const d = (c.lat - lat) * (c.lat - lat) + (c.lon - lon) * (c.lon - lon);
+      if (d < bestD) {
+        bestD = d;
+        best = c;
+      }
+    }
+    if (best && Math.sqrt(bestD) <= 0.025) return best;
+    return null;
+  }
+
+  function updateWeatherPinUI() {
+    if (!els.weatherPinStatus) return;
+    if (els.weatherAlertEnabled) els.weatherAlertEnabled.checked = !!weatherSettings.alertsEnabled;
+    if (els.weatherThreshold) els.weatherThreshold.value = String(weatherSettings.thresholdMm);
+    if (els.weatherPinDistrict) {
+      const place =
+        weatherSettings.pin && weatherSettings.pin.type === "district"
+          ? weatherSettings.pin.place
+          : "";
+      els.weatherPinDistrict.value = place;
+    }
+    const resolved = resolvePinLatLon();
+    if (!resolved) {
+      els.weatherPinStatus.textContent = "未釘選";
+      return;
+    }
+    const rain = lookupRainAt(resolved.lat, resolved.lon);
+    const sum = rain ? rain.sum2h : null;
+    const sumTxt = sum == null ? "無匯入資料" : `${sum.toFixed(1)} mm／2h`;
+    els.weatherPinStatus.textContent = `釘選：${resolved.label} · ${sumTxt}`;
+  }
+
+  function parseNowcastCsvText(text) {
+    const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((l) => l.trim());
+    if (lines.length < 2) throw new Error("CSV 空白或只有表頭。");
+    const header = lines[0].split(",").map((h) => h.trim());
+    // Accept positional 5 columns; also tolerate known English headers
+    if (header.length < 5) throw new Error("CSV 欄位數不足（需要 5 欄）。");
+
+    const byPoint = new Map();
+    let updateTime = null;
+    let rowCount = 0;
+    for (let i = 1; i < lines.length; i++) {
+      const cols = lines[i].split(",");
+      if (cols.length < 5) continue;
+      const upd = cols[0].trim();
+      const end = cols[1].trim();
+      const lat = Number(cols[2]);
+      const lon = Number(cols[3]);
+      const mm = Number(cols[4]);
+      if (!/^\d{12}$/.test(upd) || !/^\d{12}$/.test(end)) continue;
+      if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(mm)) continue;
+      if (updateTime == null) updateTime = upd;
+      else if (upd !== updateTime) {
+        // keep first update batch; ignore mixed
+      }
+      if (upd !== updateTime) continue;
+      rowCount++;
+      const key = cellKey(lat, lon);
+      let cell = byPoint.get(key);
+      if (!cell) {
+        cell = { lat: Number(lat.toFixed(3)), lon: Number(lon.toFixed(3)), slots: {}, sum2h: 0 };
+        byPoint.set(key, cell);
+      }
+      cell.slots[end] = mm;
+    }
+    if (!updateTime || byPoint.size === 0) {
+      throw new Error("無法解析有效資料列。請確認係天文台 Gridded_rainfall_nowcast CSV。");
+    }
+    // finalize sums
+    for (const cell of byPoint.values()) {
+      cell.sum2h = Object.values(cell.slots).reduce((a, b) => a + b, 0);
+    }
+    return { updateTime, byPoint, rowCount };
+  }
+
+  function matchCsdiToParsed(byPoint) {
+    const cells = {};
+    let matched = 0;
+    const points = csdiPoints.length ? csdiPoints : [];
+    const list = points.length
+      ? points
+      : Array.from(byPoint.values()).filter(
+          (c) => c.lat >= 22.1 && c.lat <= 22.6 && c.lon >= 113.8 && c.lon <= 114.5
+        );
+
+    // Spatial buckets (~0.02°) for nearest-neighbour fallback
+    const bucket = new Map();
+    const bKey = (la, lo) => `${Math.round(la * 50)},${Math.round(lo * 50)}`;
+    for (const c of byPoint.values()) {
+      const k = bKey(c.lat, c.lon);
+      if (!bucket.has(k)) bucket.set(k, []);
+      bucket.get(k).push(c);
+    }
+
+    for (const p of list) {
+      const lat = p.lat;
+      const lon = p.lon;
+      let hit = byPoint.get(cellKey(lat, lon));
+      if (!hit) {
+        let best = null;
+        let bestD = Infinity;
+        const br = Math.round(lat * 50);
+        const bc = Math.round(lon * 50);
+        for (let dr = -1; dr <= 1; dr++) {
+          for (let dc = -1; dc <= 1; dc++) {
+            const arr = bucket.get(`${br + dr},${bc + dc}`);
+            if (!arr) continue;
+            for (const c of arr) {
+              const d = (c.lat - lat) * (c.lat - lat) + (c.lon - lon) * (c.lon - lon);
+              if (d < bestD) {
+                bestD = d;
+                best = c;
+              }
+            }
+          }
+        }
+        if (best && Math.sqrt(bestD) <= 0.015) hit = best;
+      }
+      if (!hit) continue;
+      matched++;
+      cells[cellKey(lat, lon)] = {
+        lat,
+        lon,
+        sum2h: hit.sum2h,
+        slots: hit.slots,
+        objectId: p.objectId != null ? p.objectId : null,
+      };
+    }
+    return { cells, matched };
+  }
+
+  async function extractCsvFromFile(file) {
+    const name = (file.name || "").toLowerCase();
+    if (name.endsWith(".csv") || file.type === "text/csv") {
+      return { text: await file.text(), fileName: file.name };
+    }
+    if (name.endsWith(".zip") || file.type === "application/zip" || file.type === "application/x-zip-compressed") {
+      if (typeof JSZip === "undefined") {
+        throw new Error("無法解壓 ZIP（JSZip 未載入）。請先手動解壓，再匯入 CSV。");
+      }
+      const zip = await JSZip.loadAsync(file);
+      const csvName = Object.keys(zip.files).find((n) => n.toLowerCase().endsWith(".csv") && !zip.files[n].dir);
+      if (!csvName) throw new Error("ZIP 內找不到 CSV 檔。");
+      const text = await zip.files[csvName].async("string");
+      return { text, fileName: `${file.name} → ${csvName}` };
+    }
+    throw new Error("請選擇 .csv（或可解壓嘅 .zip）。");
+  }
+
+  async function importWeatherFile(file) {
+    if (!file) return;
+    try {
+      if (!csdiPoints.length) {
+        await loadCsdiPoints();
+      }
+      const { text, fileName } = await extractCsvFromFile(file);
+      const parsed = parseNowcastCsvText(text);
+      const { cells, matched } = matchCsdiToParsed(parsed.byPoint);
+      if (matched === 0) {
+        throw new Error("匯入成功解析，但冇對應到 CSDI 香港網格點。請確認檔案係最新臨近預報。");
+      }
+      weatherGrid = {
+        updateTime: parsed.updateTime,
+        importedAt: new Date().toISOString(),
+        fileName,
+        rowCount: parsed.rowCount,
+        cells,
+      };
+      persistWeatherGrid();
+      weatherSettings.lastAlertKey = null;
+      persistWeatherSettings();
+      updateWeatherImportUI();
+      updateWeatherFallbackVisibility();
+      renderWeatherMap();
+      updateWeatherPinUI();
+      checkWeatherPinAlert(true);
+      const upd = parseHkoDateTime(parsed.updateTime);
+      const stale = upd && Date.now() - upd.getTime() > WEATHER_STALE_MS;
+      toast(`已匯入 ${matched} 個網格點`);
+      setWeatherImportMsg(
+        stale
+          ? `已匯入 ${matched} 點，但資料更新時間已超過約 20 分鐘，建議重新下載。`
+          : `已匯入 ${matched} 點（共解析 ${parsed.rowCount} 列）。`,
+        stale ? "error" : "ok"
+      );
+    } catch (err) {
+      console.error(err);
+      const msg = err && err.message ? err.message : "匯入失敗";
+      setWeatherImportMsg(msg, "error");
+      toast(msg);
+    } finally {
+      if (els.weatherFile) els.weatherFile.value = "";
+    }
+  }
+
+  function clearWeatherImport() {
+    weatherGrid = null;
+    persistWeatherGrid();
+    setWeatherImportMsg("已清除匯入資料。", "ok");
+    updateWeatherImportUI();
+    updateWeatherFallbackVisibility();
+    renderWeatherMap();
+    updateWeatherPinUI();
+    toast("已清除天氣匯入");
+  }
+
+  async function loadCsdiPoints() {
+    if (els.weatherMapHint) els.weatherMapHint.textContent = "載入 CSDI 網格中…";
+    const res = await fetch(CSDI_GRID_QUERY);
+    if (!res.ok) throw new Error(`CSDI 查詢失敗（HTTP ${res.status}）`);
+    const data = await res.json();
+    const feats = Array.isArray(data.features) ? data.features : [];
+    csdiPoints = feats
+      .map((f) => {
+        const a = f.attributes || {};
+        const g = f.geometry || {};
+        const lat = Number(a.Latitude_degree_ != null ? a.Latitude_degree_ : g.y);
+        const lon = Number(a.Longitude_degree_ != null ? a.Longitude_degree_ : g.x);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+        return {
+          lat: Number(lat.toFixed(3)),
+          lon: Number(lon.toFixed(3)),
+          objectId: a.OBJECTID != null ? a.OBJECTID : null,
+        };
+      })
+      .filter(Boolean);
+    if (els.weatherMapHint) {
+      els.weatherMapHint.textContent = `CSDI ${csdiPoints.length} 點` + (weatherGrid ? " · 已疊加匯入雨量" : " · 尚未匯入 CSV");
+    }
+    return csdiPoints;
+  }
+
+  function ensureWeatherMap() {
+    if (weatherMap || !els.weatherMapEl || typeof L === "undefined") return;
+    weatherMap = L.map(els.weatherMapEl, {
+      center: [22.35, 114.15],
+      zoom: 11,
+      scrollWheelZoom: true,
+    });
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/">CARTO</a> · 網格 CSDI / 雨量 HKO',
+      maxZoom: 18,
+    }).addTo(weatherMap);
+  }
+
+  function renderWeatherMap() {
+    ensureWeatherMap();
+    if (!weatherMap) return;
+    if (weatherLayer) {
+      weatherMap.removeLayer(weatherLayer);
+      weatherLayer = null;
+    }
+    if (weatherPinMarker) {
+      weatherMap.removeLayer(weatherPinMarker);
+      weatherPinMarker = null;
+    }
+    const pts = csdiPoints.length ? csdiPoints : [];
+    weatherLayer = L.layerGroup();
+    for (const p of pts) {
+      const rain = lookupRainAt(p.lat, p.lon);
+      const sum = rain ? rain.sum2h : 0;
+      const has = !!rain;
+      const color = has ? rainColor(sum) : "#b0bec5";
+      const circle = L.circleMarker([p.lat, p.lon], {
+        radius: 5,
+        color: "#333",
+        weight: 0.6,
+        fillColor: color,
+        fillOpacity: has ? 0.85 : 0.35,
+      });
+      const sumTxt = has ? `${sum.toFixed(1)} mm／未來約 2h` : "未有匯入雨量";
+      circle.bindPopup(
+        `<strong>${p.lat.toFixed(3)}, ${p.lon.toFixed(3)}</strong><br>${sumTxt}<br><em>點擊地圖標記可釘選</em>`
+      );
+      circle.on("click", () => {
+        weatherSettings.pin = {
+          type: "cell",
+          lat: p.lat,
+          lon: p.lon,
+          objectId: p.objectId,
+        };
+        weatherSettings.lastAlertKey = null;
+        persistWeatherSettings();
+        updateWeatherPinUI();
+        renderWeatherPinMarker();
+        checkWeatherPinAlert(true);
+        toast(`已釘選網格 ${p.lat.toFixed(3)}, ${p.lon.toFixed(3)}`);
+      });
+      weatherLayer.addLayer(circle);
+    }
+    weatherLayer.addTo(weatherMap);
+    renderWeatherPinMarker();
+    if (els.weatherMapHint) {
+      els.weatherMapHint.textContent =
+        `CSDI ${pts.length} 點` + (weatherGrid ? " · 已疊加匯入雨量" : " · 尚未匯入 CSV（灰點）");
+    }
+    setTimeout(() => weatherMap && weatherMap.invalidateSize(), 50);
+  }
+
+  function renderWeatherPinMarker() {
+    if (!weatherMap) return;
+    if (weatherPinMarker) {
+      weatherMap.removeLayer(weatherPinMarker);
+      weatherPinMarker = null;
+    }
+    const resolved = resolvePinLatLon();
+    if (!resolved) return;
+    weatherPinMarker = L.marker([resolved.lat, resolved.lon], { title: "釘選位置" }).addTo(weatherMap);
+    weatherPinMarker.bindPopup(`釘選：${resolved.label}`).openPopup();
+  }
+
+  function pinAlertIdentity() {
+    const resolved = resolvePinLatLon();
+    if (!resolved || !weatherGrid) return null;
+    return `${weatherGrid.updateTime}|${resolved.lat.toFixed(3)},${resolved.lon.toFixed(3)}|${weatherSettings.thresholdMm}`;
+  }
+
+  async function checkWeatherPinAlert(forceCheck) {
+    if (!weatherSettings.alertsEnabled) return;
+    if (!("Notification" in window) || Notification.permission !== "granted") return;
+    const resolved = resolvePinLatLon();
+    if (!resolved) return;
+    const rain = lookupRainAt(resolved.lat, resolved.lon);
+    if (!rain) return;
+    const thr = Number(weatherSettings.thresholdMm) || 1;
+    if (rain.sum2h < thr) return;
+    const id = pinAlertIdentity();
+    if (!forceCheck && id && id === weatherSettings.lastAlertKey) return;
+    const ok = await showAppNotification("降雨臨近預報", {
+      body: `${resolved.label} 未來約 2 小時合計 ${rain.sum2h.toFixed(1)} mm（門檻 ${thr} mm）`,
+      tag: "daily-work-weather-pin",
+    });
+    if (ok) {
+      weatherSettings.lastAlertKey = id;
+      weatherSettings.lastAlertAt = new Date().toISOString();
+      persistWeatherSettings();
+    }
+  }
+
+  function scheduleWeatherAlertTimer() {
+    if (weatherAlertTimerId) {
+      clearInterval(weatherAlertTimerId);
+      weatherAlertTimerId = null;
+    }
+    if (!weatherSettings.alertsEnabled) return;
+    weatherAlertTimerId = setInterval(() => {
+      checkWeatherPinAlert(false);
+    }, 60 * 1000);
+    checkWeatherPinAlert(false);
+  }
+
+  async function onWeatherAlertToggle() {
+    if (els.weatherAlertEnabled && els.weatherAlertEnabled.checked) {
+      if (!weatherSettings.pin) {
+        if (els.weatherAlertEnabled) els.weatherAlertEnabled.checked = false;
+        setWeatherPinMsg("請先喺地圖點選網格，或用十八區釘選。", "error");
+        return;
+      }
+      const ok = await ensureNotificationPermission();
+      if (!ok) {
+        if (els.weatherAlertEnabled) els.weatherAlertEnabled.checked = false;
+        weatherSettings.alertsEnabled = false;
+        persistWeatherSettings();
+        updateWeatherPinUI();
+        return;
+      }
+      weatherSettings.alertsEnabled = true;
+      persistWeatherSettings();
+      scheduleWeatherAlertTimer();
+      setWeatherPinMsg("已啟用图钉通知。分頁需保持開啟；關閉後不會再提醒。", "ok");
+      checkWeatherPinAlert(true);
+    } else {
+      weatherSettings.alertsEnabled = false;
+      persistWeatherSettings();
+      scheduleWeatherAlertTimer();
+      setWeatherPinMsg("已關閉图钉通知。", "ok");
+    }
+    updateWeatherPinUI();
+  }
+
+  function onWeatherThresholdChange() {
+    const v = Number(els.weatherThreshold && els.weatherThreshold.value);
+    weatherSettings.thresholdMm = Number.isFinite(v) && v > 0 ? v : 1;
+    weatherSettings.lastAlertKey = null;
+    persistWeatherSettings();
+    updateWeatherPinUI();
+    checkWeatherPinAlert(true);
+  }
+
+  function onWeatherPinDistrictChange() {
+    const place = els.weatherPinDistrict && els.weatherPinDistrict.value;
+    if (!place) return;
+    weatherSettings.pin = { type: "district", place };
+    weatherSettings.selectedDistrict = place;
+    if (els.weatherDistrict) els.weatherDistrict.value = place;
+    weatherSettings.lastAlertKey = null;
+    persistWeatherSettings();
+    updateWeatherPinUI();
+    renderWeatherPinMarker();
+    checkWeatherPinAlert(true);
+    toast(`已釘選「${place}」中心附近網格`);
+    loadRhrread();
+  }
+
+  function unpinWeather() {
+    weatherSettings.pin = null;
+    weatherSettings.lastAlertKey = null;
+    persistWeatherSettings();
+    updateWeatherPinUI();
+    renderWeatherPinMarker();
+    setWeatherPinMsg("已取消釘選。", "ok");
+  }
+
+  function exportWeatherPinSettings() {
+    try {
+      const payload = {
+        app: "daily-workbench-weather",
+        exportedAt: new Date().toISOString(),
+        timezone: TZ,
+        settings: weatherSettings,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json;charset=utf-8",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `daily-work-weather-pin-${todayKey()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast("已匯出天氣钉選設定");
+    } catch (err) {
+      console.error(err);
+      toast("匯出失敗");
+    }
+  }
+
+  function fillDistrictSelects() {
+    if (els.weatherDistrict) {
+      els.weatherDistrict.innerHTML = "";
+      for (const d of HK_DISTRICTS) {
+        const opt = document.createElement("option");
+        opt.value = d.place;
+        opt.textContent = d.place;
+        els.weatherDistrict.appendChild(opt);
+      }
+      els.weatherDistrict.value = weatherSettings.selectedDistrict || "沙田";
+    }
+    if (els.weatherPinDistrict) {
+      const first = els.weatherPinDistrict.querySelector('option[value=""]');
+      els.weatherPinDistrict.innerHTML = "";
+      if (first) els.weatherPinDistrict.appendChild(first);
+      else {
+        const opt0 = document.createElement("option");
+        opt0.value = "";
+        opt0.textContent = "— 用地圖點選 —";
+        els.weatherPinDistrict.appendChild(opt0);
+      }
+      for (const d of HK_DISTRICTS) {
+        const opt = document.createElement("option");
+        opt.value = d.place;
+        opt.textContent = d.place;
+        els.weatherPinDistrict.appendChild(opt);
+      }
+    }
+  }
+
+  async function loadRhrread() {
+    if (!els.weatherRhrValue) return;
+    try {
+      if (els.weatherRhrStatus) els.weatherRhrStatus.textContent = "載入中…";
+      const res = await fetch(HKO_RHRREAD);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      rhrCache = data;
+      const place = (els.weatherDistrict && els.weatherDistrict.value) || weatherSettings.selectedDistrict;
+      const list = (data.rainfall && Array.isArray(data.rainfall.data) && data.rainfall.data) || [];
+      const row = list.find((x) => x.place === place);
+      const start = data.rainfall && data.rainfall.startTime;
+      const end = data.rainfall && data.rainfall.endTime;
+      let range = "";
+      try {
+        if (start && end) {
+          const fmt = new Intl.DateTimeFormat("zh-HK", {
+            timeZone: TZ,
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          });
+          range = `${fmt.format(new Date(start))}–${fmt.format(new Date(end))}`;
+        }
+      } catch {
+        /* ignore */
+      }
+      if (!row) {
+        els.weatherRhrValue.textContent = `${place}：無資料`;
+      } else {
+        const mm = row.max != null ? row.max : row.value;
+        els.weatherRhrValue.textContent = `${place}：${mm} ${row.unit || "mm"}（實況${range ? " · " + range : ""}）`;
+      }
+      if (els.weatherRhrStatus) {
+        els.weatherRhrStatus.textContent = data.updateTime
+          ? `更新 ${formatNoteTime(data.updateTime)}`
+          : "已載入";
+      }
+    } catch (err) {
+      console.error(err);
+      if (els.weatherRhrStatus) els.weatherRhrStatus.textContent = "載入失敗";
+      els.weatherRhrValue.textContent = "無法取得十八區雨量";
+      toast("十八區雨量載入失敗");
+    }
+  }
+
+  async function loadOpenMeteoFallback() {
+    if (!els.weatherOmValue) return;
+    const place = (els.weatherDistrict && els.weatherDistrict.value) || weatherSettings.selectedDistrict;
+    const d = HK_DISTRICTS.find((x) => x.place === place) || HK_DISTRICTS[0];
+    try {
+      if (els.weatherOmBanner) els.weatherOmBanner.hidden = false;
+      els.weatherOmValue.textContent = "載入 Open-Meteo 中…";
+      const url =
+        `https://api.open-meteo.com/v1/forecast?latitude=${d.lat}&longitude=${d.lon}` +
+        `&minutely_15=precipitation&forecast_days=1&timezone=Asia%2FHong_Kong`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const times = (data.minutely_15 && data.minutely_15.time) || [];
+      const precip = (data.minutely_15 && data.minutely_15.precipitation) || [];
+      const now = Date.now();
+      let sum2h = 0;
+      let n = 0;
+      for (let i = 0; i < times.length; i++) {
+        const t = new Date(times[i]).getTime();
+        if (t >= now && t <= now + 2 * 3600 * 1000) {
+          sum2h += Number(precip[i]) || 0;
+          n++;
+        }
+      }
+      els.weatherOmValue.textContent =
+        `${d.place} 中心粗略估計：未來約 2h 合計 ${sum2h.toFixed(1)} mm` +
+        `（Open-Meteo，${n} 個 15 分鐘格 · 非 HKO 臨近預報）`;
+      if (els.weatherOmStatus) els.weatherOmStatus.textContent = "已載入後備估計";
+    } catch (err) {
+      console.error(err);
+      els.weatherOmValue.textContent = "Open-Meteo 載入失敗";
+      toast("Open-Meteo 後備載入失敗");
+    }
+  }
+
+  async function ensureWeatherBootstrapped() {
+    if (weatherBootstrapped) {
+      if (weatherMap) weatherMap.invalidateSize();
+      return;
+    }
+    weatherBootstrapped = true;
+    fillDistrictSelects();
+    updateWeatherImportUI();
+    updateWeatherPinUI();
+    updateWeatherFallbackVisibility();
+    try {
+      await loadCsdiPoints();
+      renderWeatherMap();
+    } catch (err) {
+      console.error(err);
+      if (els.weatherMapHint) els.weatherMapHint.textContent = "CSDI 網格載入失敗";
+      toast("CSDI 網格載入失敗");
+    }
+    loadRhrread();
+    scheduleWeatherAlertTimer();
+  }
+
 
   // —— Wiring ——
   els.taskForm.addEventListener("submit", (e) => {
@@ -2818,6 +3673,7 @@
     else if (e.key === "2") setActiveTab("calendar");
     else if (e.key === "3") setActiveTab("notes");
     else if (e.key === "4") setActiveTab("reminders");
+    else if (e.key === "5") setActiveTab("weather");
   });
 
   els.waterEnabled.addEventListener("change", () => onWaterToggle());
@@ -2831,6 +3687,50 @@
   }
   if (els.alertEventLead) {
     els.alertEventLead.addEventListener("change", onAlertEventLeadChange);
+  }
+
+  if (els.btnWeatherImport) {
+    els.btnWeatherImport.addEventListener("click", () => els.weatherFile && els.weatherFile.click());
+  }
+  if (els.weatherFile) {
+    els.weatherFile.addEventListener("change", () => {
+      const file = els.weatherFile.files && els.weatherFile.files[0];
+      importWeatherFile(file);
+    });
+  }
+  if (els.btnWeatherClear) {
+    els.btnWeatherClear.addEventListener("click", () => {
+      if (confirm("清除已匯入嘅臨近預報網格？")) clearWeatherImport();
+    });
+  }
+  if (els.weatherAlertEnabled) {
+    els.weatherAlertEnabled.addEventListener("change", () => onWeatherAlertToggle());
+  }
+  if (els.weatherThreshold) {
+    els.weatherThreshold.addEventListener("change", onWeatherThresholdChange);
+  }
+  if (els.weatherPinDistrict) {
+    els.weatherPinDistrict.addEventListener("change", onWeatherPinDistrictChange);
+  }
+  if (els.btnWeatherUnpin) {
+    els.btnWeatherUnpin.addEventListener("click", unpinWeather);
+  }
+  if (els.btnWeatherExportPin) {
+    els.btnWeatherExportPin.addEventListener("click", exportWeatherPinSettings);
+  }
+  if (els.weatherDistrict) {
+    els.weatherDistrict.addEventListener("change", () => {
+      weatherSettings.selectedDistrict = els.weatherDistrict.value;
+      persistWeatherSettings();
+      loadRhrread();
+      updateWeatherFallbackVisibility();
+    });
+  }
+  if (els.btnWeatherRhrRefresh) {
+    els.btnWeatherRhrRefresh.addEventListener("click", () => loadRhrread());
+  }
+  if (els.btnWeatherOmRefresh) {
+    els.btnWeatherOmRefresh.addEventListener("click", () => loadOpenMeteoFallback());
   }
 
   els.noteForm.addEventListener("submit", (e) => {
@@ -2891,6 +3791,7 @@
       }
       renderAll();
       runAlertChecks();
+      checkWeatherPinAlert(false);
     }
   }, 60 * 1000);
 
@@ -2898,6 +3799,12 @@
   updateServerHint();
   initTheme();
   renderAll();
+  if (activeTab === "weather") {
+    ensureWeatherBootstrapped();
+  } else if (weatherSettings.alertsEnabled) {
+    // light init for background pin checks without forcing map
+    scheduleWeatherAlertTimer();
+  }
 
   registerServiceWorker().then(() => {
     if (state.waterReminder.enabled) {

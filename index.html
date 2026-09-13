@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="每日工作台 — 任務看板、行程、筆記與飲水提醒，全部儲存於本機。" />
+  <meta name="description" content="每日工作台 — 任務看板、行程、筆記、提醒與天氣臨近預報，全部儲存於本機。" />
   <title>每日工作台</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -17,6 +17,7 @@
       } catch (e) {}
     })();
   </script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
   <link rel="stylesheet" href="./styles.css" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232d4a3e'/%3E%3Cpath d='M8 16h16M16 8v16' stroke='%23c8e6d8' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E" />
 </head>
@@ -74,6 +75,9 @@
       </button>
       <button type="button" class="mod-tabs__btn" role="tab" id="tab-reminders" data-tab="reminders" aria-controls="panel-reminders" aria-selected="false">
         <span class="mod-tabs__key">4</span>提醒
+      </button>
+      <button type="button" class="mod-tabs__btn" role="tab" id="tab-weather" data-tab="weather" aria-controls="panel-weather" aria-selected="false">
+        <span class="mod-tabs__key">5</span>天氣
       </button>
     </nav>
 
@@ -354,10 +358,140 @@
           </p>
         </div>
       </section>
+
+      <!-- 天氣：HKO 網格臨近預報／十八區實況 -->
+      <section class="panel panel--module" id="panel-weather" role="tabpanel" aria-labelledby="tab-weather" data-module="weather" hidden>
+        <div class="panel__head">
+          <div>
+            <h2 id="weather-heading">天氣</h2>
+            <p class="panel__meta">天文台網格降雨臨近預報 · 本機匯入 · 图钉通知</p>
+          </div>
+        </div>
+
+        <div class="weather-block" id="weather-download-block">
+          <div class="weather-block__head">
+            <h3 class="weather-block__title">下載臨近預報（手動）</h3>
+            <p class="weather-block__hint">唔會由網頁自動擷取 CSV（CORS）</p>
+          </div>
+          <ul class="weather-links">
+            <li>
+              <a href="https://data.weather.gov.hk/weatherAPI/hko_data/csdi/dataset/gridded_rainfall_nowcast.zip" target="_blank" rel="noopener noreferrer">
+                下載 ZIP（約 11KB，內含 CSV）
+              </a>
+            </li>
+            <li>
+              <a href="https://data.weather.gov.hk/weatherAPI/hko_data/F3/Gridded_rainfall_nowcast.csv" target="_blank" rel="noopener noreferrer">
+                下載 CSV（約 2.6MB）
+              </a>
+            </li>
+          </ul>
+          <p class="weather-block__aside">
+            請用上面連結喺瀏覽器手動下載。若下載咗 ZIP，請先解壓出 CSV 再匯入（本站唔用 npm；ZIP 亦可嘗試喺瀏覽器解壓）。天文台約每 12 分鐘更新一次。
+          </p>
+        </div>
+
+        <div class="weather-block" id="weather-import-block">
+          <div class="weather-block__head">
+            <h3 class="weather-block__title">匯入 CSV</h3>
+            <p class="weather-block__hint" id="weather-import-status">尚未匯入</p>
+          </div>
+          <div class="weather-block__controls">
+            <button type="button" class="btn btn--primary" id="btn-weather-import">選擇檔案</button>
+            <input type="file" id="weather-file" accept=".csv,.zip,text/csv,application/zip" hidden />
+            <button type="button" class="btn btn--ghost btn--tiny" id="btn-weather-clear" title="清除已匯入嘅網格">清除匯入</button>
+          </div>
+          <p class="weather-block__note" id="weather-import-msg" hidden></p>
+          <p class="weather-block__aside" id="weather-import-meta">
+            支援 HKO 五欄：更新時間、完結時間、緯度、經度、半小時臨近雨量 (mm)。匯入後只保留同 CSDI 網格點對應嘅資料，存於 localStorage。
+          </p>
+        </div>
+
+        <div class="weather-block" id="weather-map-block">
+          <div class="weather-block__head">
+            <h3 class="weather-block__title">臨近預報地圖</h3>
+            <p class="weather-block__hint" id="weather-map-hint">載入 CSDI 網格中…</p>
+          </div>
+          <div id="weather-map" class="weather-map" role="img" aria-label="香港網格降雨臨近預報地圖"></div>
+          <div class="weather-legend" id="weather-legend" aria-hidden="true">
+            <span class="weather-legend__item"><i style="background:#dce8e2"></i>0</span>
+            <span class="weather-legend__item"><i style="background:#9fd4ff"></i>&lt;1</span>
+            <span class="weather-legend__item"><i style="background:#4fc3f7"></i>1–5</span>
+            <span class="weather-legend__item"><i style="background:#ffd54f"></i>5–10</span>
+            <span class="weather-legend__item"><i style="background:#ff9800"></i>10–20</span>
+            <span class="weather-legend__item"><i style="background:#e53935"></i>20–40</span>
+            <span class="weather-legend__item"><i style="background:#6a1b9a"></i>≥40 mm／2h</span>
+          </div>
+          <p class="weather-block__aside">
+            底圖網格來自 CSDI（約 840 點，瀏覽器可 CORS 讀取）。顏色為匯入 CSV 對應網格「未來約 2 小時」半小時雨量合計。點擊網格可釘選。
+          </p>
+        </div>
+
+        <div class="weather-block" id="weather-pin-block">
+          <div class="weather-block__head">
+            <h3 class="weather-block__title">图钉降雨通知</h3>
+            <p class="weather-block__hint" id="weather-pin-status">未釘選</p>
+          </div>
+          <div class="weather-block__controls">
+            <label class="water-toggle">
+              <input type="checkbox" id="weather-alert-enabled" />
+              <span>啟用通知</span>
+            </label>
+            <label class="composer-meta__field">
+              <span class="composer-meta__label">門檻（未來 2h 合計 mm）</span>
+              <input type="number" id="weather-threshold" class="composer-meta__input" min="0.1" max="200" step="0.1" value="1" style="width:5.5rem" />
+            </label>
+            <label class="composer-meta__field">
+              <span class="composer-meta__label">或以十八區釘選</span>
+              <select id="weather-pin-district" class="composer-meta__select">
+                <option value="">— 用地圖點選 —</option>
+              </select>
+            </label>
+            <button type="button" class="btn btn--tiny btn--ghost" id="btn-weather-unpin">取消釘選</button>
+            <button type="button" class="btn btn--tiny btn--ghost" id="btn-weather-export-pin" title="匯出钉選設定 JSON">匯出設定</button>
+          </div>
+          <p class="weather-block__note" id="weather-pin-msg" hidden></p>
+          <p class="weather-block__aside">
+            當釘選位置嘅匯入臨近預報（未來約 2 小時合計）≥ 門檻時，用瀏覽器通知（Windows toast）。需保持此分頁開啟；重新匯入 CSV 後會再檢查。設定存於 localStorage。
+          </p>
+        </div>
+
+        <div class="weather-block" id="weather-district-block">
+          <div class="weather-block__head">
+            <h3 class="weather-block__title">十八區實況雨量</h3>
+            <p class="weather-block__hint" id="weather-rhr-status">尚未載入</p>
+          </div>
+          <div class="weather-block__controls">
+            <label class="composer-meta__field">
+              <span class="composer-meta__label">地區</span>
+              <select id="weather-district" class="composer-meta__select"></select>
+            </label>
+            <button type="button" class="btn btn--ghost btn--tiny" id="btn-weather-rhr-refresh">重新整理</button>
+          </div>
+          <p class="weather-rhr-value" id="weather-rhr-value">—</p>
+          <p class="weather-block__aside">
+            資料來源：天文台 rhrread 開放數據（CORS 允許）。顯示所選地區過去約一小時錄得雨量，屬<strong>實況</strong>而非臨近預報。
+          </p>
+        </div>
+
+        <div class="weather-block" id="weather-fallback-block">
+          <div class="weather-block__head">
+            <h3 class="weather-block__title">粗略後備（Open-Meteo）</h3>
+            <p class="weather-block__hint" id="weather-om-status">僅喺未匯入 CSV 時使用</p>
+          </div>
+          <p class="weather-om-banner" id="weather-om-banner" hidden>
+            ⚠️ 呢啲<strong>唔係</strong>天文台臨近預報，只係 Open-Meteo 對所選十八區中心點嘅粗略降水估計（15 分鐘），僅供未匯入 CSV 時參考。
+          </p>
+          <p class="weather-rhr-value" id="weather-om-value">—</p>
+          <div class="weather-block__controls">
+            <button type="button" class="btn btn--ghost btn--tiny" id="btn-weather-om-refresh">載入後備估計</button>
+          </div>
+        </div>
+      </section>
+
     </main>
 
     <footer class="footer">
-      <p>資料僅存於本機瀏覽器（localStorage）· 時區 Asia/Hong_Kong · 快捷鍵 1–4 切換模組</p>
+      <p>資料僅存於本機瀏覽器（localStorage）· 時區 Asia/Hong_Kong · 快捷鍵 1–5 切換模組</p>
     </footer>
   </div>
 
@@ -403,6 +537,8 @@
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="./config.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script src="./app.js" defer></script>
 </body>
 </html>

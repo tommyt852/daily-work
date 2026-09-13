@@ -1562,3 +1562,138 @@ html.theme-dark .due-badge--today {
 #alerts-block {
   margin-top: 1.25rem;
 }
+
+
+/* —— Weather —— */
+.weather-block {
+  margin-top: 1.25rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+
+.weather-block:first-of-type {
+  margin-top: 0;
+}
+
+.weather-block__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.weather-block__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.weather-block__hint {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--ink-faint);
+}
+
+.weather-block__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.weather-block__note {
+  margin: 0.75rem 0 0;
+  font-size: 0.8rem;
+  color: var(--warn);
+  line-height: 1.45;
+}
+
+.weather-block__note--error {
+  color: var(--danger);
+}
+
+.weather-block__note--ok {
+  color: var(--accent-mid);
+}
+
+.weather-block__aside {
+  margin: 0.85rem 0 0;
+  font-size: 0.78rem;
+  color: var(--ink-faint);
+  line-height: 1.5;
+  max-width: 48rem;
+}
+
+.weather-links {
+  margin: 0;
+  padding-left: 1.2rem;
+  line-height: 1.7;
+}
+
+.weather-links a {
+  color: var(--accent-mid);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.weather-map {
+  height: min(420px, 55vh);
+  width: 100%;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: var(--bg);
+  z-index: 0;
+}
+
+.weather-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 0.9rem;
+  margin-top: 0.65rem;
+  font-size: 0.72rem;
+  color: var(--ink-faint);
+}
+
+.weather-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.weather-legend__item i {
+  display: inline-block;
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 2px;
+  border: 1px solid var(--line);
+}
+
+.weather-rhr-value {
+  margin: 0.65rem 0 0;
+  font-size: 1.15rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.weather-om-banner {
+  margin: 0 0 0.65rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warn) 18%, var(--bg-elevated));
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--line));
+  color: var(--ink);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.leaflet-container {
+  font-family: inherit;
+}
+
+.theme-dark .weather-map {
+  background: #12171c;
+}

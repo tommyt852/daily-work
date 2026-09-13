@@ -1,6 +1,6 @@
 # 每日工作台
 
-一個純靜態的每日工作頁面：任務看板（待辦／進行中／完成）、本週行程、快速筆記與飲水提醒。資料只存於瀏覽器 localStorage，無需登入或後端。介面為繁體中文（香港），時區 Asia/Hong_Kong。
+一個純靜態的每日工作頁面：任務看板（待辦／進行中／完成）、本週行程、快速筆記、提醒與天氣（天文台網格降雨臨近預報）。資料只存於瀏覽器 localStorage，無需登入或後端。介面為繁體中文（香港），時區 Asia/Hong_Kong。
 
 ## 使用方式
 
@@ -82,8 +82,9 @@ netsh http add urlacl url=http://localhost:8787/ user=Everyone
 - **行程** — 本週日曆
 - **筆記** — 草稿與快速筆記
 - **提醒** — 飲水／任務／行程提醒設定、本機伺服器載入／儲存
+- **天氣** — 天文台網格降雨臨近預報（手動下載匯入）、地圖、图钉通知、十八區實況雨量
 
-只顯示目前啟用的模組；上次選取的分頁會記在 localStorage。快捷鍵 `1`–`4`（未聚焦於輸入框時）可切換。
+只顯示目前啟用的模組；上次選取的分頁會記在 localStorage。快捷鍵 `1`–`5`（未聚焦於輸入框時）可切換。
 
 頁首保留搜尋、深色模式切換、日期與「匯出／匯入 JSON」「帶入昨日未完成」「清除示範資料」。
 
@@ -200,7 +201,38 @@ netsh http add urlacl url=http://localhost:8787/ user=Everyone
 - 任務到期／逾期 同 行程開始（可選提前 15 分鐘）嘅 **本機通知**
 - 匯出 envelope **v5**（相容無 `dueDate`／`alerts` 嘅舊 JSON）
 
-（天氣 CSV／地圖／图钉屬後續 commit，本版未包含。）
+## 版本重點（Commit 3 · 天氣）
+
+喺「天氣」分頁加入天文台網格降雨臨近預報工作流（純靜態 + CDN；無 npm）：
+
+- 手動下載連結（ZIP／CSV）＋本機匯入；地圖疊加；图钉通知；十八區實況；可選 Open-Meteo 粗略後備
+- **唔會**自動用 JS 去 fetch 嗰兩個下載 URL（見下）
+
+## 天氣：下載同匯入
+
+天文台「香港網格點降雨臨近預報」CSV **唔提供瀏覽器 CORS**，所以網頁**唔會**用 `fetch` 去攞：
+
+- https://data.weather.gov.hk/weatherAPI/hko_data/csdi/dataset/gridded_rainfall_nowcast.zip（約 11KB）
+- https://data.weather.gov.hk/weatherAPI/hko_data/F3/Gridded_rainfall_nowcast.csv（約 2.6MB）
+
+請喺「天氣」分頁用連結（`target=_blank`）手動下載。若下載 ZIP，可直接匯入（瀏覽器內 JSZip 解壓）或自行解壓後揀 `.csv`。
+
+CSV 五欄：更新時間、完結時間、緯度、經度、半小時臨近雨量 (mm)。匯入後會驗證、以 toast 提示錯誤，並將對應 CSDI 網格點嘅雨量存入 **localStorage**。若「更新時間」距而家超過約 **20 分鐘**，會警告請重新下載。介面會顯示上次匯入時間。
+
+## 天氣：地圖同图钉
+
+- 地圖底點由 CSDI MapServer 查詢載入（約 840 點；瀏覽器 CORS 可用）：  
+  `…/hko_rcd_1634958531320_87755/MapServer/0/query`
+- 用 Leaflet（unpkg CDN）顯示；匯入雨量以最近 lat/lon 對應上色（未來約 2 小時半小時雨量合計）
+- 點擊網格釘選；亦可用十八區下拉釘選（區中心）
+- 可設門檻（預設未來 2h 合計 ≥ 1 mm）並用現有 **Web Notification**（Windows toast）提醒；會定時檢查匯入資料，重新匯入後亦會再查。**分頁需保持開啟**。钉選同門檻存 localStorage；可選匯出设定 JSON
+
+## 天氣：十八區實況同後備
+
+- **實況**：`rhrread`（`lang=tc`）允許 CORS，下拉揀 18 區睇過去約一小時錄得雨量（實況，非臨近預報）
+- **後備**：若未匯入 CSV，可選載入 Open-Meteo（所選區中心、`minutely_15`）。介面會清楚標示**唔係**天文台臨近預報
+
+本 commit **唔包含**自動 GET／POST 同步下載（屬後續 commit）。
 
 ## 檔案
 
@@ -209,9 +241,9 @@ netsh http add urlacl url=http://localhost:8787/ user=Everyone
 | `index.html` | 主頁面 |
 | `styles.css` | 樣式 |
 | `config.js` | 本機伺服器 host／port／API 路徑（瀏覽器同 `server.ps1` 共用） |
-| `app.js` | 邏輯與 localStorage |
+| `app.js` | 邏輯與 localStorage（含天氣匯入／地圖／图钉） |
 | `sw.js` | Service Worker（飲水提醒通知輔助） |
 | `server.ps1` | 本機 HttpListener：靜態站 + `/api/data` 讀寫 `daily-work.json` |
 | `README.md` | 本說明 |
 
-無需 `package.json`、無需建置。
+無需 `package.json`、無需建置。天氣分頁另載 Leaflet／JSZip CDN（unpkg／jsdelivr）。
