@@ -4,7 +4,7 @@
 
 ## 使用方式
 
-直接用任何靜態伺服器開啟本目錄即可，**不需 npm / 建置步驟**。
+直接用任何靜態伺服器開啟本目錄即可，**不需 npm / 建置步驟**。所有專案文字檔（HTML／JS／CSS／JSON／Markdown）為 **UTF-8**。
 
 例如：
 
@@ -17,49 +17,25 @@ python3 -m http.server 8080
 
 亦可直接用瀏覽器開啟 `index.html`（部分瀏覽器對 `file://` 的 localStorage／Service Worker 行為可能不同，建議用靜態伺服器）。
 
-## 本機 PowerShell 伺服器（自動讀寫 JSON）
+## 本機伺服器（讀寫 JSON）
 
-喺**放 JSON 嘅資料夾**開 PowerShell，執行：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File path\to\server.ps1
-```
-
-（或者把 `server.ps1` 同 `config.js`、靜態檔一齊放喺工作目錄，然後 `cd` 過去再執行。）
-
-- 工作目錄（`Get-Location`）會用來讀寫 `daily-work.json`。
-- 靜態頁面（`index.html`、`config.js`、`app.js` 等）由 **script 所在目錄**提供。
-- 瀏覽器請開 **http://127.0.0.1:8787/** ，而**唔好**用 GitHub Pages 去打本機 API。
-- 頂部「匯出 JSON／匯入 JSON」檔案功能仍然可用。
-- 改 IP／port 只編輯 `config.js`，然後**重開** PowerShell server。
+工作台可用瀏覽器「從伺服器載入／儲存到伺服器」對本機 JSON 做 GET／POST。位址喺 `config.js`：
 
 ```js
 window.DAILY_WORK_SERVER = {
   host: "127.0.0.1",
   port: 8787,
-  path: "/api/data"
+  path: "/data/daily-work.json"
 };
 ```
 
+- 預設路徑係 **`/data/daily-work.json`**（UTF-8 JSON）。請用你自己嘅靜態／本機伺服器提供頁面同該檔。
+- 瀏覽器請開 **http://127.0.0.1:8787/** （或你設嘅 host／port），而**唔好**用 GitHub Pages 去打本機 HTTP（HTTPS → HTTP 混合內容會被擋）。
+- 頂部「匯出 JSON／匯入 JSON」檔案功能仍然可用；匯入／匯出同天氣 CSV 皆以 **UTF-8** 讀寫。
+
 ### 點解唔能夠用 GitHub Pages 打本機 API
 
-GitHub Pages 係 **HTTPS**。瀏覽器會阻擋 HTTPS 頁面去呼叫 `http://127.0.0.1`（混合內容 / mixed content）。所以 `server.ps1` 必須一併提供靜態站，你要由 `http://127.0.0.1:8787/` 開啟工作台，先可以「從伺服器載入／儲存到伺服器」。
-
-### 如果 Listen 失敗
-
-HttpListener 有時需要 URL 預約。以**系統管理員**開 PowerShell：
-
-```powershell
-netsh http add urlacl url=http://127.0.0.1:8787/ user=Everyone
-```
-
-`server.ps1` 若 `127.0.0.1` 失敗會再試 `http://localhost:8787/`；localhost 都要預約就再加：
-
-```powershell
-netsh http add urlacl url=http://localhost:8787/ user=Everyone
-```
-
-（port 若已改過 `config.js`，urlacl 都要跟新 port。）Ctrl+C 停止伺服器。
+GitHub Pages 係 **HTTPS**。瀏覽器會阻擋 HTTPS 頁面去呼叫 `http://127.0.0.1`（混合內容 / mixed content）。請用本機 HTTP origin 開啟工作台，先可以「從伺服器載入／儲存到伺服器」。
 
 ## 啟用 GitHub Pages
 
@@ -242,10 +218,9 @@ CSV 五欄：更新時間、完結時間、緯度、經度、半小時臨近雨�
 |------|------|
 | `index.html` | 主頁面 |
 | `styles.css` | 樣式 |
-| `config.js` | 本機伺服器 host／port／API 路徑（瀏覽器同 `server.ps1` 共用） |
+| `config.js` | 本機伺服器 host／port／JSON 路徑（預設 `/data/daily-work.json`） |
 | `app.js` | 邏輯與 localStorage（含天氣匯入／地圖／图钉） |
 | `sw.js` | Service Worker（飲水提醒通知輔助） |
-| `server.ps1` | 本機 HttpListener：靜態站 + `/api/data` 讀寫 `daily-work.json` |
 | `README.md` | 本說明 |
 
-無需 `package.json`、無需建置。天氣分頁另載 Leaflet／JSZip CDN（unpkg／jsdelivr）。
+無需 `package.json`、無需建置。Leaflet／JSZip／字體已放喺 `vendor/`，一般使用唔需要外網；天氣相關（HKO／CSDI／Open-Meteo、地圖底圖 tiles、手動下載 CSV／ZIP 連結）只喺你開天氣或觸發時先連網。

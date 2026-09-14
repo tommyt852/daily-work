@@ -2714,9 +2714,10 @@
     const host = String(raw.host != null ? raw.host : "127.0.0.1").trim() || "127.0.0.1";
     const portNum = Number(raw.port);
     const port = Number.isFinite(portNum) && portNum > 0 ? portNum : 8787;
-    let path = String(raw.path != null ? raw.path : "/api/data").trim() || "/api/data";
+    let path = String(raw.path != null ? raw.path : "/data/daily-work.json").trim() || "/data/daily-work.json";
     if (!path.startsWith("/")) path = `/${path}`;
-    path = path.replace(/\/+$/, "") || "/api/data";
+    // Keep file extension paths intact (e.g. /data/daily-work.json); only strip trailing slash on directories.
+    if (path.length > 1 && path.endsWith("/")) path = path.replace(/\/+$/, "") || "/data/daily-work.json";
     return { host, port, path };
   }
 
@@ -2737,7 +2738,7 @@
 
   function toastNetworkFail() {
     const origin = getServerOrigin();
-    toast(`連接失敗：本機伺服器未開或無法連上。請確認已執行 server.ps1，並用瀏覽器開啟 ${origin}/ 。`);
+    toast(`連接失敗：本機伺服器未開或無法連上。請確認伺服器已提供 ${getServerApiUrl()}，並用同一 origin 開啟工作台（唔好用 GitHub Pages 打本機 HTTP）。`);
   }
 
   function warnMixedContent() {
@@ -2758,7 +2759,7 @@
         method: "GET",
         mode: "cors",
         credentials: "omit",
-        headers: { Accept: "application/json" },
+        headers: { Accept: "application/json;charset=utf-8" },
       });
     } catch (err) {
       console.error(err);
@@ -2809,7 +2810,7 @@
         method: "POST",
         mode: "cors",
         credentials: "omit",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json;charset=utf-8" },
         body: JSON.stringify(buildExportPayload()),
       });
     } catch (err) {
@@ -3275,10 +3276,15 @@
     return { cells, matched };
   }
 
+  function decodeUtf8(bytes) {
+    return new TextDecoder("utf-8").decode(bytes);
+  }
+
   async function extractCsvFromFile(file) {
     const name = (file.name || "").toLowerCase();
     if (name.endsWith(".csv") || file.type === "text/csv") {
-      return { text: await file.text(), fileName: file.name };
+      const buf = await file.arrayBuffer();
+      return { text: decodeUtf8(buf), fileName: file.name };
     }
     if (name.endsWith(".zip") || file.type === "application/zip" || file.type === "application/x-zip-compressed") {
       if (typeof JSZip === "undefined") {
@@ -3287,8 +3293,8 @@
       const zip = await JSZip.loadAsync(file);
       const csvName = Object.keys(zip.files).find((n) => n.toLowerCase().endsWith(".csv") && !zip.files[n].dir);
       if (!csvName) throw new Error("ZIP 內找不到 CSV 檔。");
-      const text = await zip.files[csvName].async("string");
-      return { text, fileName: `${file.name} → ${csvName}` };
+      const bytes = await zip.files[csvName].async("uint8array");
+      return { text: decodeUtf8(bytes), fileName: `${file.name} → ${csvName}` };
     }
     throw new Error("請選擇 .csv（或可解壓嘅 .zip）。");
   }

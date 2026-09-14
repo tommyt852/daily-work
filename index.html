@@ -5,9 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="description" content="每日工作台 — 任務看板、行程、筆記、提醒與天氣臨近預報，全部儲存於本機。" />
   <title>每日工作台</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./vendor/fonts/fonts.css" />
   <script>
     (function () {
       try {
@@ -17,7 +15,7 @@
       } catch (e) {}
     })();
   </script>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <link rel="stylesheet" href="./vendor/leaflet/leaflet.css" />
   <link rel="stylesheet" href="./styles.css" />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232d4a3e'/%3E%3Cpath d='M8 16h16M16 8v16' stroke='%23c8e6d8' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E" />
 </head>
@@ -352,9 +350,9 @@
             </button>
           </div>
           <p class="server-block__aside">
-            伺服器位址喺 <code>config.js</code> 設定（改完要重開 PowerShell server）。GitHub Pages 係 HTTPS，瀏覽器唔可以呼叫
-            <code>http://127.0.0.1</code>（混合內容被阻擋）。請用 <code>server.ps1</code> 一併提供靜態頁面，喺瀏覽器開
-            <code>http://127.0.0.1:8787/</code>，而唔好用 GitHub Pages 去打本機 API。頂部「匯出 JSON／匯入 JSON」檔案功能仍然可用。
+            伺服器位址喺 <code>config.js</code> 設定（預設 GET／POST <code>/data/daily-work.json</code>，UTF-8）。GitHub Pages 係 HTTPS，瀏覽器唔可以呼叫
+            <code>http://127.0.0.1</code>（混合內容被阻擋）。請用你自己嘅本機靜態伺服器一併提供頁面同 JSON，喺瀏覽器開
+            <code>http://127.0.0.1:8787/</code>，而唔好用 GitHub Pages 去打本機。頂部「匯出 JSON／匯入 JSON」檔案功能仍然可用。
           </p>
         </div>
       </section>
@@ -542,8 +540,8 @@
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="./config.js"></script>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="./vendor/leaflet/leaflet.js"></script>
+  <script src="./vendor/jszip/jszip.min.js"></script>
   <script src="./app.js" defer></script>
 </body>
 </html>
