@@ -412,6 +412,11 @@
             <p class="weather-block__hint" id="weather-map-hint">載入 CSDI 網格中…</p>
           </div>
           <div id="weather-map" class="weather-map" role="img" aria-label="香港網格降雨臨近預報地圖"></div>
+          <div class="weather-playback" id="weather-playback" hidden>
+            <button type="button" class="btn btn--tiny btn--ghost" id="btn-weather-play" title="播放／暫停半小時幀">播放</button>
+            <input type="range" id="weather-frame-slider" class="weather-playback__slider" min="0" max="3" step="1" value="0" aria-label="臨近預報時段" />
+            <span class="weather-playback__label" id="weather-frame-label">未來 0–30 分鐘</span>
+          </div>
           <div class="weather-legend" id="weather-legend" aria-hidden="true">
             <span class="weather-legend__item"><i style="background:#dce8e2"></i>0</span>
             <span class="weather-legend__item"><i style="background:#9fd4ff"></i>&lt;1</span>
@@ -419,10 +424,10 @@
             <span class="weather-legend__item"><i style="background:#ffd54f"></i>5–10</span>
             <span class="weather-legend__item"><i style="background:#ff9800"></i>10–20</span>
             <span class="weather-legend__item"><i style="background:#e53935"></i>20–40</span>
-            <span class="weather-legend__item"><i style="background:#6a1b9a"></i>≥40 mm／2h</span>
+            <span class="weather-legend__item"><i style="background:#6a1b9a"></i>≥40 mm／半小時</span>
           </div>
           <p class="weather-block__aside">
-            底圖網格來自 CSDI（約 840 點，瀏覽器可 CORS 讀取）。顏色為匯入 CSV 對應網格「未來約 2 小時」半小時雨量合計。點擊網格可釘選。
+            底圖網格來自 CSDI（約 840 點，瀏覽器可 CORS 讀取）。顏色跟隨已匯入 HKO CSV 嘅半小時幀雨量（可用滑桿／播放睇未來約 2 小時共 4 幀）。點擊網格可釘選。地圖<strong>唔會</strong>用 Open-Meteo 上色。
           </p>
         </div>
 
@@ -451,7 +456,7 @@
           </div>
           <p class="weather-block__note" id="weather-pin-msg" hidden></p>
           <p class="weather-block__aside">
-            當釘選位置嘅匯入臨近預報（未來約 2 小時合計）≥ 門檻時，用瀏覽器通知（Windows toast）。需保持此分頁開啟；重新匯入 CSV 後會再檢查。設定存於 localStorage。
+            當釘選位置嘅 HKO 臨近預報（任一半小時幀或未來約 2 小時合計）≥ 門檻時，用瀏覽器通知（Windows toast）。需保持此分頁開啟；重新匯入 CSV 後會再檢查。設定存於 localStorage。
           </p>
         </div>
 

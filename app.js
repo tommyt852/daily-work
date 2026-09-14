@@ -757,6 +757,10 @@
     btnWeatherClear: $("#btn-weather-clear"),
     weatherMapHint: $("#weather-map-hint"),
     weatherMapEl: $("#weather-map"),
+    weatherPlayback: $("#weather-playback"),
+    btnWeatherPlay: $("#btn-weather-play"),
+    weatherFrameSlider: $("#weather-frame-slider"),
+    weatherFrameLabel: $("#weather-frame-label"),
     weatherAlertEnabled: $("#weather-alert-enabled"),
     weatherThreshold: $("#weather-threshold"),
     weatherPinDistrict: $("#weather-pin-district"),
@@ -1288,11 +1292,11 @@
 
     if (tasks.length === 0) {
       els.tasksEmpty.hidden = false;
-      return;
-    }
-    if (filtered.length === 0 && boardTasks.length > 0) {
+    } else if (filtered.length === 0 && boardTasks.length > 0) {
       els.tasksFilteredEmpty.hidden = false;
     }
+    // Keep 行程 week dots / day list in sync with task dueDates (tasks remain source of truth).
+    refreshCalendarView();
   }
 
   function addTask(text) {
@@ -1887,6 +1891,98 @@
   }
 
   // —— Calendar ——
+  /** Tasks with dueDate on dateKey (any board day); skip soft-hidden done. */
+  function tasksDueOn(dateKey) {
+    const today = todayKey();
+    const out = [];
+    for (const [boardKey, list] of Object.entries(state.tasksByDate || {})) {
+      if (!Array.isArray(list)) continue;
+      for (const t of list) {
+        if (normalizeDueDate(t.dueDate) !== dateKey) continue;
+        if (!isDoneVisibleOnBoard(t, today)) continue;
+        out.push({ task: t, boardDateKey: boardKey });
+      }
+    }
+    out.sort((a, b) => (a.task.createdAt || "").localeCompare(b.task.createdAt || ""));
+    return out;
+  }
+
+  function hasCalendarMarksOn(dateKey) {
+    if ((state.events || []).some((e) => e.date === dateKey)) return true;
+    return tasksDueOn(dateKey).length > 0;
+  }
+
+  function refreshCalendarView() {
+    renderWeekStrip();
+    renderEvents();
+  }
+
+  function jumpToDueTask(task, boardDateKey) {
+    if (!task) return;
+    setActiveTab("tasks");
+    const onToday = getTodayTasks().some((t) => t.id === task.id);
+    if (onToday) {
+      searchFocusTaskId = task.id;
+    } else {
+      searchFocusTaskId = null;
+      toast(`該任務在 ${boardDateKey || "其他日期"}（看板只顯示今日）`);
+    }
+    updateFilterClearBtn();
+    renderTasks();
+    const card =
+      els.kanban &&
+      Array.from(els.kanban.querySelectorAll(".task-card")).find(
+        (el) => el.dataset.id === task.id
+      );
+    if (card) card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
+
+  function createDueTaskRow(entry) {
+    const { task, boardDateKey } = entry;
+    const li = document.createElement("li");
+    li.className = "event-item event-item--due-task";
+    if (isTaskOverdue(task)) li.classList.add("event-item--overdue");
+    li.title = "前往任務分頁";
+    li.tabIndex = 0;
+    li.setAttribute("role", "button");
+
+    const time = document.createElement("div");
+    time.className = "event-item__time";
+    time.textContent = "到期";
+
+    const body = document.createElement("div");
+    body.className = "event-item__body";
+
+    const titleRow = document.createElement("div");
+    titleRow.className = "event-item__title-row";
+    const title = document.createElement("p");
+    title.className = "event-item__title";
+    title.textContent = task.text;
+    const badge = document.createElement("span");
+    badge.className = "event-item__badge";
+    badge.textContent = "任務";
+    titleRow.append(title, badge);
+    body.appendChild(titleRow);
+
+    if (isTaskOverdue(task)) {
+      const overdue = document.createElement("span");
+      overdue.className = "event-item__overdue";
+      overdue.textContent = "逾期";
+      body.appendChild(overdue);
+    }
+
+    li.append(time, body);
+    const go = () => jumpToDueTask(task, boardDateKey);
+    li.addEventListener("click", go);
+    li.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        go();
+      }
+    });
+    return li;
+  }
+
   function renderWeekStrip() {
     const today = todayKey();
     const keys = weekKeysAround(today);
@@ -1916,10 +2012,10 @@
       num.className = "day-chip__num";
       num.textContent = String(Number(key.split("-")[2]));
 
-      const hasEvents = state.events.some((e) => e.date === key);
+      const hasMarks = hasCalendarMarksOn(key);
       const dot = document.createElement("span");
       dot.className = "day-chip__dot";
-      dot.hidden = !hasEvents;
+      dot.hidden = !hasMarks;
       dot.setAttribute("aria-hidden", "true");
 
       btn.append(dow, num, dot);
@@ -1940,12 +2036,18 @@
 
   function renderEvents() {
     const events = eventsForSelected();
+    const dueTasks = tasksDueOn(selectedDate);
     els.eventList.innerHTML = "";
-    if (events.length === 0) {
+    if (events.length === 0 && dueTasks.length === 0) {
       els.eventsEmpty.hidden = false;
       return;
     }
     els.eventsEmpty.hidden = true;
+
+    // Due tasks first (all-day 「到期」); source of truth stays on the task.
+    dueTasks.forEach((entry) => {
+      els.eventList.appendChild(createDueTaskRow(entry));
+    });
 
     events.forEach((ev) => {
       const li = document.createElement("li");
@@ -2816,10 +2918,20 @@
   let weatherMap = null;
   let weatherLayer = null;
   let weatherPinMarker = null;
+  let weatherCircles = [];
+  let weatherFrameIndex = 0;
+  let weatherPlayTimerId = null;
   let csdiPoints = [];
   let weatherBootstrapped = false;
   let weatherAlertTimerId = null;
   let rhrCache = null;
+
+  const WEATHER_FRAME_LABELS = [
+    "未來 0–30 分鐘",
+    "未來 30–60 分鐘",
+    "未來 60–90 分鐘",
+    "未來 90–120 分鐘",
+  ];
 
   function defaultWeatherSettings() {
     return {
@@ -3097,11 +3209,14 @@
     if (!updateTime || byPoint.size === 0) {
       throw new Error("無法解析有效資料列。請確認係天文台 Gridded_rainfall_nowcast CSV。");
     }
-    // finalize sums
+    // finalize sums + ordered half-hour frame ends (typically 4 = 2h)
+    const frameEndSet = new Set();
     for (const cell of byPoint.values()) {
-      cell.sum2h = Object.values(cell.slots).reduce((a, b) => a + b, 0);
+      cell.sum2h = Object.values(cell.slots).reduce((a, b) => a + Number(b || 0), 0);
+      Object.keys(cell.slots).forEach((k) => frameEndSet.add(k));
     }
-    return { updateTime, byPoint, rowCount };
+    const frameEnds = Array.from(frameEndSet).sort();
+    return { updateTime, byPoint, rowCount, frameEnds };
   }
 
   function matchCsdiToParsed(byPoint) {
@@ -3195,8 +3310,11 @@
         importedAt: new Date().toISOString(),
         fileName,
         rowCount: parsed.rowCount,
+        frameEnds: Array.isArray(parsed.frameEnds) ? parsed.frameEnds.slice() : [],
         cells,
       };
+      weatherFrameIndex = 0;
+      stopWeatherPlayback();
       persistWeatherGrid();
       weatherSettings.lastAlertKey = null;
       persistWeatherSettings();
@@ -3226,10 +3344,13 @@
 
   function clearWeatherImport() {
     weatherGrid = null;
+    weatherFrameIndex = 0;
+    stopWeatherPlayback();
     persistWeatherGrid();
     setWeatherImportMsg("已清除匯入資料。", "ok");
     updateWeatherImportUI();
     updateWeatherFallbackVisibility();
+    updateWeatherPlaybackUI();
     renderWeatherMap();
     updateWeatherPinUI();
     toast("已清除天氣匯入");
@@ -3275,6 +3396,141 @@
     }).addTo(weatherMap);
   }
 
+  function getNowcastFrameEnds() {
+    if (!weatherGrid || !weatherGrid.cells) return [];
+    if (Array.isArray(weatherGrid.frameEnds) && weatherGrid.frameEnds.length) {
+      return weatherGrid.frameEnds.slice().sort();
+    }
+    const set = new Set();
+    for (const c of Object.values(weatherGrid.cells)) {
+      if (c && c.slots) Object.keys(c.slots).forEach((k) => set.add(k));
+    }
+    const ends = Array.from(set).sort();
+    weatherGrid.frameEnds = ends;
+    return ends;
+  }
+
+  function weatherFrameLabel(index) {
+    if (index >= 0 && index < WEATHER_FRAME_LABELS.length) return WEATHER_FRAME_LABELS[index];
+    return `幀 ${index + 1}`;
+  }
+
+  function frameMmForCell(rain, endKey) {
+    if (!rain || !endKey || !rain.slots) return null;
+    if (rain.slots[endKey] == null) return null;
+    const v = Number(rain.slots[endKey]);
+    return Number.isFinite(v) ? v : null;
+  }
+
+  function cellExceedsThreshold(rain, thr) {
+    if (!rain) return false;
+    const t = Number(thr) || 0;
+    if ((Number(rain.sum2h) || 0) >= t) return true;
+    if (rain.slots) {
+      for (const v of Object.values(rain.slots)) {
+        if ((Number(v) || 0) >= t) return true;
+      }
+    }
+    return false;
+  }
+
+  function stopWeatherPlayback() {
+    if (weatherPlayTimerId) {
+      clearInterval(weatherPlayTimerId);
+      weatherPlayTimerId = null;
+    }
+    if (els.btnWeatherPlay) els.btnWeatherPlay.textContent = "播放";
+  }
+
+  function toggleWeatherPlayback() {
+    const ends = getNowcastFrameEnds();
+    if (ends.length < 2) return;
+    if (weatherPlayTimerId) {
+      stopWeatherPlayback();
+      return;
+    }
+    if (els.btnWeatherPlay) els.btnWeatherPlay.textContent = "暫停";
+    weatherPlayTimerId = setInterval(() => {
+      const n = getNowcastFrameEnds().length;
+      if (n === 0) {
+        stopWeatherPlayback();
+        return;
+      }
+      weatherFrameIndex = (weatherFrameIndex + 1) % n;
+      syncWeatherFrameControls();
+      applyWeatherFrameColors();
+    }, 900);
+  }
+
+  function syncWeatherFrameControls() {
+    const ends = getNowcastFrameEnds();
+    if (weatherFrameIndex < 0) weatherFrameIndex = 0;
+    if (ends.length && weatherFrameIndex >= ends.length) weatherFrameIndex = ends.length - 1;
+    if (els.weatherFrameSlider) {
+      els.weatherFrameSlider.max = String(Math.max(0, ends.length - 1));
+      els.weatherFrameSlider.value = String(weatherFrameIndex);
+    }
+    if (els.weatherFrameLabel) {
+      els.weatherFrameLabel.textContent = ends.length
+        ? weatherFrameLabel(weatherFrameIndex)
+        : "尚未匯入";
+    }
+  }
+
+  function updateWeatherPlaybackUI() {
+    const ends = getNowcastFrameEnds();
+    const has = ends.length > 0;
+    if (els.weatherPlayback) els.weatherPlayback.hidden = !has;
+    if (!has) {
+      stopWeatherPlayback();
+      weatherFrameIndex = 0;
+    }
+    syncWeatherFrameControls();
+  }
+
+  function onWeatherFrameSliderInput() {
+    if (!els.weatherFrameSlider) return;
+    const v = Number(els.weatherFrameSlider.value);
+    weatherFrameIndex = Number.isFinite(v) ? Math.max(0, Math.floor(v)) : 0;
+    syncWeatherFrameControls();
+    applyWeatherFrameColors();
+  }
+
+  function applyWeatherFrameColors() {
+    const ends = getNowcastFrameEnds();
+    const endKey = ends[weatherFrameIndex] || null;
+    const label = weatherFrameLabel(weatherFrameIndex);
+    for (const item of weatherCircles) {
+      const rain = lookupRainAt(item.lat, item.lon);
+      const mm = endKey != null ? frameMmForCell(rain, endKey) : null;
+      const has = rain != null && mm != null;
+      const color = has ? rainColor(mm) : rain ? rainColor(0) : "#b0bec5";
+      item.circle.setStyle({
+        fillColor: color,
+        fillOpacity: rain ? 0.85 : 0.35,
+      });
+      const frameTxt = has
+        ? `${mm.toFixed(1)} mm · ${label}`
+        : rain
+          ? `呢幀無資料 · ${label}`
+          : "未有匯入雨量";
+      const sumTxt = rain
+        ? `2h 合計 ${(Number(rain.sum2h) || 0).toFixed(1)} mm`
+        : "";
+      item.circle.setPopupContent(
+        `<strong>${item.lat.toFixed(3)}, ${item.lon.toFixed(3)}</strong><br>${frameTxt}` +
+          (sumTxt ? `<br>${sumTxt}` : "") +
+          `<br><em>點擊地圖標記可釘選</em>`
+      );
+    }
+    if (els.weatherMapHint) {
+      const n = weatherCircles.length;
+      els.weatherMapHint.textContent = ends.length
+        ? `CSDI ${n} 點 · HKO ${label}`
+        : `CSDI ${n} 點 · 尚未匯入 CSV（灰點）`;
+    }
+  }
+
   function renderWeatherMap() {
     ensureWeatherMap();
     if (!weatherMap) return;
@@ -3286,23 +3542,19 @@
       weatherMap.removeLayer(weatherPinMarker);
       weatherPinMarker = null;
     }
+    weatherCircles = [];
     const pts = csdiPoints.length ? csdiPoints : [];
     weatherLayer = L.layerGroup();
     for (const p of pts) {
-      const rain = lookupRainAt(p.lat, p.lon);
-      const sum = rain ? rain.sum2h : 0;
-      const has = !!rain;
-      const color = has ? rainColor(sum) : "#b0bec5";
       const circle = L.circleMarker([p.lat, p.lon], {
         radius: 5,
         color: "#333",
         weight: 0.6,
-        fillColor: color,
-        fillOpacity: has ? 0.85 : 0.35,
+        fillColor: "#b0bec5",
+        fillOpacity: 0.35,
       });
-      const sumTxt = has ? `${sum.toFixed(1)} mm／未來約 2h` : "未有匯入雨量";
       circle.bindPopup(
-        `<strong>${p.lat.toFixed(3)}, ${p.lon.toFixed(3)}</strong><br>${sumTxt}<br><em>點擊地圖標記可釘選</em>`
+        `<strong>${p.lat.toFixed(3)}, ${p.lon.toFixed(3)}</strong><br>載入中…`
       );
       circle.on("click", () => {
         weatherSettings.pin = {
@@ -3319,13 +3571,12 @@
         toast(`已釘選網格 ${p.lat.toFixed(3)}, ${p.lon.toFixed(3)}`);
       });
       weatherLayer.addLayer(circle);
+      weatherCircles.push({ circle, lat: p.lat, lon: p.lon, objectId: p.objectId });
     }
     weatherLayer.addTo(weatherMap);
     renderWeatherPinMarker();
-    if (els.weatherMapHint) {
-      els.weatherMapHint.textContent =
-        `CSDI ${pts.length} 點` + (weatherGrid ? " · 已疊加匯入雨量" : " · 尚未匯入 CSV（灰點）");
-    }
+    updateWeatherPlaybackUI();
+    applyWeatherFrameColors();
     setTimeout(() => weatherMap && weatherMap.invalidateSize(), 50);
   }
 
@@ -3355,11 +3606,14 @@
     const rain = lookupRainAt(resolved.lat, resolved.lon);
     if (!rain) return;
     const thr = Number(weatherSettings.thresholdMm) || 1;
-    if (rain.sum2h < thr) return;
+    if (!cellExceedsThreshold(rain, thr)) return;
     const id = pinAlertIdentity();
     if (!forceCheck && id && id === weatherSettings.lastAlertKey) return;
+    const maxFrame = rain.slots
+      ? Math.max(0, ...Object.values(rain.slots).map((v) => Number(v) || 0))
+      : 0;
     const ok = await showAppNotification("降雨臨近預報", {
-      body: `${resolved.label} 未來約 2 小時合計 ${rain.sum2h.toFixed(1)} mm（門檻 ${thr} mm）`,
+      body: `${resolved.label} 2h 合計 ${(Number(rain.sum2h) || 0).toFixed(1)} mm · 單幀最高 ${maxFrame.toFixed(1)} mm（門檻 ${thr} mm）`,
       tag: "daily-work-weather-pin",
     });
     if (ok) {
@@ -3702,6 +3956,13 @@
     els.btnWeatherClear.addEventListener("click", () => {
       if (confirm("清除已匯入嘅臨近預報網格？")) clearWeatherImport();
     });
+  }
+  if (els.btnWeatherPlay) {
+    els.btnWeatherPlay.addEventListener("click", () => toggleWeatherPlayback());
+  }
+  if (els.weatherFrameSlider) {
+    els.weatherFrameSlider.addEventListener("input", onWeatherFrameSliderInput);
+    els.weatherFrameSlider.addEventListener("change", onWeatherFrameSliderInput);
   }
   if (els.weatherAlertEnabled) {
     els.weatherAlertEnabled.addEventListener("change", () => onWeatherAlertToggle());

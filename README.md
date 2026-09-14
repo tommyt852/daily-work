@@ -175,6 +175,7 @@ netsh http add urlacl url=http://localhost:8787/ user=Everyone
 ### 行程／筆記／提醒
 
 - **本週行程**：一週日曆條；新增／編輯／刪除定時行程。
+- 有到期日的任務會在該日行程顯示。
 - **轉成任務**：每則行程有「轉成任務」掣，會喺今日看板開一張**待辦**（標題同行程，`dueDate`＝行程日期），然後可留喺行程或跳去「任務」分頁。
 - **快速筆記**：草稿自動儲存；可存成筆記；Enter 快速新增。
 - **飲水提醒**（在「提醒」分頁）：Web Notifications；間隔 30／45／60／90 分鐘。無推播伺服器——關閉分頁或瀏覽器後不會再提醒。附小型 service worker 輔助通知。
@@ -206,6 +207,7 @@ netsh http add urlacl url=http://localhost:8787/ user=Everyone
 喺「天氣」分頁加入天文台網格降雨臨近預報工作流（純靜態 + CDN；無 npm）：
 
 - 手動下載連結（ZIP／CSV）＋本機匯入；地圖疊加；图钉通知；十八區實況；可選 Open-Meteo 粗略後備
+- 臨近預報地圖按 HKO 半小時幀動態播放（滑桿／播放；唔用 Open-Meteo 上色）
 - **唔會**自動用 JS 去 fetch 嗰兩個下載 URL（見下）
 
 ## 天氣：下載同匯入

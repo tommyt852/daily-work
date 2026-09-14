@@ -926,6 +926,57 @@ body {
   gap: 0.2rem;
 }
 
+.event-item--due-task {
+  grid-template-columns: 4.5rem 1fr;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--accent-soft) 55%, transparent);
+  border: 1px dashed var(--line);
+}
+.event-item--due-task:hover,
+.event-item--due-task:focus-visible {
+  border-color: var(--accent-mid);
+  outline: none;
+}
+.event-item__body {
+  min-width: 0;
+}
+.event-item__title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+}
+.event-item--due-task .event-item__title {
+  font-weight: 600;
+}
+.event-item__badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.35rem;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+}
+.event-item__overdue {
+  display: inline-block;
+  margin-top: 0.25rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #b42318;
+}
+.event-item--overdue .event-item__time {
+  color: #b42318;
+}
+html.theme-dark .event-item--due-task {
+  background: color-mix(in srgb, var(--accent-soft) 40%, var(--bg-elevated));
+}
+html.theme-dark .event-item__overdue,
+html.theme-dark .event-item--overdue .event-item__time {
+  color: #f97066;
+}
+
 /* —— Notes / scratch —— */
 .scratch {
   border: 1px solid var(--line);
@@ -1647,6 +1698,25 @@ html.theme-dark .due-badge--today {
   border: 1px solid var(--line);
   background: var(--bg);
   z-index: 0;
+}
+
+.weather-playback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 0.75rem;
+  margin-top: 0.65rem;
+}
+.weather-playback__slider {
+  flex: 1 1 10rem;
+  min-width: 8rem;
+  accent-color: var(--accent-mid);
+}
+.weather-playback__label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  min-width: 9rem;
 }
 
 .weather-legend {
