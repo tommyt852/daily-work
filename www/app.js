@@ -2709,16 +2709,21 @@
     toast(`匯入成功${when}`);
   }
 
+  function normalizeServerPath(rawPath, fallback) {
+    let path = String(rawPath != null ? rawPath : fallback).trim() || fallback;
+    if (!path.startsWith("/")) path = `/${path}`;
+    if (path.length > 1 && path.endsWith("/")) path = path.replace(/\/+$/, "") || fallback;
+    return path;
+  }
+
   function getServerConfig() {
     const raw = (typeof window !== "undefined" && window.DAILY_WORK_SERVER) || {};
-    const host = String(raw.host != null ? raw.host : "127.0.0.1").trim() || "127.0.0.1";
+    const host = String(raw.host != null ? raw.host : "localhost").trim() || "localhost";
     const portNum = Number(raw.port);
-    const port = Number.isFinite(portNum) && portNum > 0 ? portNum : 8787;
-    let path = String(raw.path != null ? raw.path : "/data/daily-work.json").trim() || "/data/daily-work.json";
-    if (!path.startsWith("/")) path = `/${path}`;
-    // Keep file extension paths intact (e.g. /data/daily-work.json); only strip trailing slash on directories.
-    if (path.length > 1 && path.endsWith("/")) path = path.replace(/\/+$/, "") || "/data/daily-work.json";
-    return { host, port, path };
+    const port = Number.isFinite(portNum) && portNum > 0 ? portNum : 8085;
+    const getPath = normalizeServerPath(raw.getPath || raw.path, "/data/daily-work.json");
+    const postPath = normalizeServerPath(raw.postPath || raw.apiPath, "/api/data");
+    return { host, port, getPath, postPath };
   }
 
   function getServerOrigin() {
@@ -2726,9 +2731,60 @@
     return `http://${host}:${port}`;
   }
 
+  function serverRequestUrl(path) {
+    const origin = getServerOrigin();
+    try {
+      const configured = new URL(origin);
+      const herePort = window.location.port || (window.location.protocol === "https:" ? "443" : "80");
+      const cfgPort = configured.port || (configured.protocol === "https:" ? "443" : "80");
+      if (
+        window.location.protocol === configured.protocol &&
+        window.location.hostname === configured.hostname &&
+        herePort === cfgPort
+      ) {
+        return path;
+      }
+    } catch {
+      /* use absolute */
+    }
+    return `${origin}${path}`;
+  }
+
+  function getServerGetUrl() {
+    return serverRequestUrl(getServerConfig().getPath);
+  }
+
+  function getServerPostUrl() {
+    return serverRequestUrl(getServerConfig().postPath);
+  }
+
   function getServerApiUrl() {
-    const { path } = getServerConfig();
-    return `${getServerOrigin()}${path}`;
+    return getServerGetUrl();
+  }
+
+  async function parseJsonBody(res) {
+    const buf = await res.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    let text;
+    if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+      text = new TextDecoder("utf-16le").decode(buf);
+    } else if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+      text = new TextDecoder("utf-16be").decode(buf);
+    } else if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+      text = new TextDecoder("utf-8").decode(buf);
+    } else if (bytes.length >= 4 && bytes[1] === 0 && bytes[3] === 0) {
+      text = new TextDecoder("utf-16le").decode(buf);
+    } else {
+      text = new TextDecoder("utf-8").decode(buf);
+    }
+    text = String(text || "").replace(/^\uFEFF/, "");
+    return JSON.parse(text);
+  }
+
+  function responseErrorDetail(body) {
+    if (!body || typeof body !== "object") return "";
+    const msg = body.message || body.error;
+    return msg ? `：${msg}` : "";
   }
 
   function statusLabel(res) {
@@ -2737,8 +2793,7 @@
   }
 
   function toastNetworkFail() {
-    const origin = getServerOrigin();
-    toast(`連接失敗：本機伺服器未開或無法連上。請確認伺服器已提供 ${getServerApiUrl()}，並用同一 origin 開啟工作台（唔好用 GitHub Pages 打本機 HTTP）。`);
+    toast(`連接失敗：本機伺服器未開或無法連上。請確認已用 run.bat／web.ps1 開 ${getServerOrigin()}/ ，GET ${getServerGetUrl()}，POST ${getServerPostUrl()}。`);
   }
 
   function warnMixedContent() {
@@ -2752,7 +2807,7 @@
 
   async function importFromServer() {
     if (warnMixedContent()) return;
-    const url = getServerApiUrl();
+    const url = getServerGetUrl();
     let res;
     try {
       res = await fetch(url, {
@@ -2769,8 +2824,8 @@
     if (!res.ok) {
       let detail = "";
       try {
-        const errBody = await res.json();
-        if (errBody && errBody.error) detail = `：${errBody.error}`;
+        const errBody = await parseJsonBody(res.clone());
+        detail = responseErrorDetail(errBody);
       } catch {
         /* ignore */
       }
@@ -2779,7 +2834,7 @@
     }
     let parsed;
     try {
-      parsed = await res.json();
+      parsed = await parseJsonBody(res);
     } catch {
       toast(`從伺服器載入失敗（${statusLabel(res)}）：回傳不是有效的 JSON`);
       return;
@@ -2803,7 +2858,7 @@
 
   async function exportToServer() {
     if (warnMixedContent()) return;
-    const url = getServerApiUrl();
+    const url = getServerPostUrl();
     let res;
     try {
       res = await fetch(url, {
@@ -2818,15 +2873,14 @@
       toastNetworkFail();
       return;
     }
-    if (!res.ok) {
-      let detail = "";
-      try {
-        const errBody = await res.json();
-        if (errBody && errBody.error) detail = `：${errBody.error}`;
-      } catch {
-        /* ignore */
-      }
-      toast(`儲存到伺服器失敗（${statusLabel(res)}）${detail}`);
+    let body = null;
+    try {
+      body = await parseJsonBody(res.clone());
+    } catch {
+      /* empty or non-JSON */
+    }
+    if (!res.ok || (body && body.status && String(body.status).toLowerCase() === "error")) {
+      toast(`儲存到伺服器失敗（${statusLabel(res)}）${responseErrorDetail(body)}`);
       return;
     }
     toast(`已儲存到伺服器（${statusLabel(res)}）`);
@@ -2834,7 +2888,7 @@
 
   function updateServerHint() {
     if (!els.serverUrlHint) return;
-    els.serverUrlHint.textContent = getServerApiUrl();
+    els.serverUrlHint.textContent = `GET ${getServerGetUrl()}  ·  POST ${getServerPostUrl()}`;
   }
 
   function importJsonFile(file) {

@@ -1,10 +1,12 @@
 /**
- * 本機伺服器位址（UTF-8）。改 host / port / path 只編輯此檔。
- * GET／POST 目標為 path 所指嘅 JSON（預設 /data/daily-work.json）。
+ * 本機伺服器位址（UTF-8）。改 host / port / 路徑只編輯此檔。
+ * GET：靜態 JSON（web.ps1 由 www/ 提供）預設 /data/daily-work.json
+ * POST：controller 預設 /api/data（對應 controller/api/data.ps1）
  * 由 index.html 喺 app.js 之前載入。
  */
 window.DAILY_WORK_SERVER = {
-  host: "127.0.0.1",
-  port: 8787,
-  path: "/data/daily-work.json"
+  host: "localhost",
+  port: 8085,
+  getPath: "/data/daily-work.json",
+  postPath: "/api/data"
 };

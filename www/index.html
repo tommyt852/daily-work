@@ -350,9 +350,8 @@
             </button>
           </div>
           <p class="server-block__aside">
-            伺服器位址喺 <code>config.js</code> 設定（預設 GET／POST <code>/data/daily-work.json</code>，UTF-8）。GitHub Pages 係 HTTPS，瀏覽器唔可以呼叫
-            <code>http://127.0.0.1</code>（混合內容被阻擋）。請用你自己嘅本機靜態伺服器一併提供頁面同 JSON，喺瀏覽器開
-            <code>http://127.0.0.1:8787/</code>，而唔好用 GitHub Pages 去打本機。頂部「匯出 JSON／匯入 JSON」檔案功能仍然可用。
+            伺服器位址喺 <code>config.js</code>。載入用 GET <code>/data/daily-work.json</code>（<code>www/data</code> 靜態檔），儲存用 POST <code>/api/data</code>。請用 <code>run.bat</code> 喺瀏覽器開
+            <code>http://localhost:8085/</code>，而唔好用 GitHub Pages 打本機（HTTPS 混合內容會被擋）。頂部「匯出 JSON／匯入 JSON」檔案功能仍然可用。
           </p>
         </div>
       </section>
